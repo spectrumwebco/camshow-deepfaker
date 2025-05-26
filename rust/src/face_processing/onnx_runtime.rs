@@ -5,7 +5,13 @@ use anyhow::{Result, anyhow};
 use thiserror::Error;
 use std::collections::HashMap;
 use std::fs;
+use std::io::{self, Write};
 use log::{info, warn, error};
+use ndarray::{Array, ArrayD, Dimension, IxDyn};
+use num_cpus;
+
+#[cfg(feature = "onnxruntime")]
+use ort::{Session, SessionBuilder, Value, GraphOptimizationLevel, Environment, LoggingLevel, OrtError, TensorElementDataType};
 
 use crate::platform::{ExecutionProvider, get_optimal_provider};
 
@@ -28,15 +34,21 @@ pub enum OnnxError {
     
     #[error("Failed to download model: {0}")]
     DownloadError(String),
+    
+    #[cfg(feature = "onnxruntime")]
+    #[error("ONNX Runtime error: {0}")]
+    OrtError(#[from] OrtError),
 }
 
 pub struct OnnxSession {
     model_path: PathBuf,
-    
     execution_provider: ExecutionProvider,
     
-    #[allow(dead_code)]
-    session: Option<()>, // Will be replaced with actual ONNX session type
+    #[cfg(feature = "onnxruntime")]
+    session: Option<Session>,
+    
+    #[cfg(not(feature = "onnxruntime"))]
+    session: Option<()>,
     
     input_names: Vec<String>,
     output_names: Vec<String>,
@@ -52,19 +64,113 @@ impl OnnxSession {
         
         let execution_provider = execution_provider.unwrap_or_else(get_optimal_provider);
         
+        #[cfg(feature = "onnxruntime")]
+        let (session, input_names, output_names) = {
+            let environment = Environment::builder()
+                .with_name("camshow_deepfaker")
+                .with_log_level(LoggingLevel::Warning)
+                .build()?;
+            
+            let mut session_builder = SessionBuilder::new(&environment)?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                .with_intra_op_num_threads(num_cpus::get())?;
+            
+            match execution_provider {
+                ExecutionProvider::CUDA => {
+                    #[cfg(feature = "cuda")]
+                    {
+                        info!("Using CUDA execution provider");
+                        session_builder = session_builder.with_cuda_provider()?;
+                    }
+                    
+                    #[cfg(not(feature = "cuda"))]
+                    {
+                        warn!("CUDA requested but not available, falling back to CPU");
+                    }
+                },
+                ExecutionProvider::CoreML => {
+                    #[cfg(feature = "coreml")]
+                    {
+                        info!("Using CoreML execution provider");
+                        session_builder = session_builder.with_coreml_provider()?;
+                    }
+                    
+                    #[cfg(not(feature = "coreml"))]
+                    {
+                        warn!("CoreML requested but not available, falling back to CPU");
+                    }
+                },
+                ExecutionProvider::CPU => {
+                    info!("Using CPU execution provider");
+                }
+            }
+            
+            let session = session_builder.with_model_from_file(&model_path)?;
+            
+            let input_names = session.inputs
+                .iter()
+                .map(|input| input.name.clone())
+                .collect::<Vec<String>>();
+            
+            let output_names = session.outputs
+                .iter()
+                .map(|output| output.name.clone())
+                .collect::<Vec<String>>();
+            
+            (Some(session), input_names, output_names)
+        };
+        
+        #[cfg(not(feature = "onnxruntime"))]
+        let (session, input_names, output_names) = {
+            warn!("ONNX Runtime feature not enabled, using placeholder session");
+            (None, vec![], vec![])
+        };
         
         Ok(Self {
             model_path,
             execution_provider,
-            session: None,
-            input_names: vec![],
-            output_names: vec![],
+            session,
+            input_names,
+            output_names,
         })
     }
     
-    #[allow(dead_code)]
-    pub fn run(&self, _inputs: HashMap<String, ndarray::Array4<f32>>) -> Result<HashMap<String, ndarray::Array4<f32>>, OnnxError> {
-        Ok(HashMap::new())
+    pub fn run(&self, inputs: HashMap<String, ArrayD<f32>>) -> Result<HashMap<String, ArrayD<f32>>, OnnxError> {
+        #[cfg(feature = "onnxruntime")]
+        {
+            if let Some(session) = &self.session {
+                let mut input_values = Vec::new();
+                
+                for (name, array) in &inputs {
+                    if !self.input_names.contains(name) {
+                        return Err(OnnxError::InvalidInput(format!("Unknown input name: {}", name)));
+                    }
+                    
+                    let value = Value::from_array(array.clone())?;
+                    input_values.push(value);
+                }
+                
+                let outputs = session.run(input_values)?;
+                
+                let mut result = HashMap::new();
+                
+                for (i, name) in self.output_names.iter().enumerate() {
+                    if i < outputs.len() {
+                        let output = outputs[i].try_extract::<f32>()?;
+                        result.insert(name.clone(), output);
+                    }
+                }
+                
+                Ok(result)
+            } else {
+                Err(OnnxError::InferenceError("No session available".to_string()))
+            }
+        }
+        
+        #[cfg(not(feature = "onnxruntime"))]
+        {
+            Err(OnnxError::InferenceError("ONNX Runtime feature not enabled".to_string()))
+        }
     }
     
     pub fn execution_provider(&self) -> ExecutionProvider {
@@ -74,11 +180,18 @@ impl OnnxSession {
     pub fn model_path(&self) -> &Path {
         &self.model_path
     }
+    
+    pub fn input_names(&self) -> &[String] {
+        &self.input_names
+    }
+    
+    pub fn output_names(&self) -> &[String] {
+        &self.output_names
+    }
 }
 
 pub struct ModelManager {
     model_dir: PathBuf,
-    
     model_urls: HashMap<String, String>,
 }
 
@@ -128,11 +241,70 @@ impl ModelManager {
         let url = self.model_urls.get(model_name)
             .ok_or_else(|| OnnxError::ModelNotFound(format!("No URL found for model: {}", model_name)))?;
         
-        Err(OnnxError::DownloadError(format!("Download not implemented yet for model: {}", model_name)))
+        self.download_model(url, &model_path)
+            .map_err(|e| OnnxError::DownloadError(format!("Failed to download model {}: {}", model_name, e)))?;
+        
+        Ok(model_path)
+    }
+    
+    pub fn download_model(&self, url: &str, output_path: &Path) -> Result<(), anyhow::Error> {
+        info!("Downloading model from {} to {}", url, output_path.display());
+        
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        
+        let client = reqwest::blocking::Client::builder()
+            .user_agent("camshow-deepfaker-rust/0.1.0")
+            .build()?;
+        
+        let response = client.get(url).send()?;
+        
+        if !response.status().is_success() {
+            return Err(anyhow!("Failed to download model: HTTP status {}", response.status()));
+        }
+        
+        let content_length = response.content_length().unwrap_or(0);
+        info!("Downloading {} bytes", content_length);
+        
+        let mut file = fs::File::create(output_path)?;
+        let bytes = response.bytes()?;
+        file.write_all(&bytes)?;
+        
+        info!("Downloaded {} bytes to {}", bytes.len(), output_path.display());
+        
+        Ok(())
     }
     
     pub fn model_exists(&self, model_name: &str) -> bool {
         self.model_dir.join(model_name).exists()
+    }
+    
+    pub fn download_all_models(&self) -> Result<Vec<String>, PyErr> {
+        let required_models = vec![
+            "inswapper_128.onnx",
+            "buffalo_l.onnx",
+            "gfpgan_1.4.onnx",
+        ];
+        
+        let mut downloaded_paths = Vec::new();
+        
+        for model_name in required_models {
+            match self.get_model_path(model_name) {
+                Ok(path) => {
+                    info!("Successfully downloaded or found model: {}", model_name);
+                    downloaded_paths.push(path.to_string_lossy().to_string());
+                },
+                Err(e) => {
+                    error!("Failed to download model {}: {}", model_name, e);
+                    return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        format!("Failed to download model {}: {}", model_name, e)
+                    ));
+                }
+            }
+        }
+        
+        Ok(downloaded_paths)
     }
 }
 
@@ -206,6 +378,10 @@ impl PyModelManager {
     
     fn model_exists(&self, model_name: &str) -> bool {
         self.manager.model_exists(model_name)
+    }
+    
+    fn download_all_models(&self) -> PyResult<Vec<String>> {
+        self.manager.download_all_models()
     }
     
     fn __repr__(&self) -> PyResult<String> {
