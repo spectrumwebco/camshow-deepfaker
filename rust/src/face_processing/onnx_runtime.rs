@@ -1,20 +1,23 @@
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyList, PyTuple, PyBytes};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use thiserror::Error;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, Write};
+use std::io::Write;
 use log::{info, warn, error};
-use ndarray::{Array, ArrayD, Dimension, IxDyn};
+use ndarray::{ArrayD, IxDyn, Array};
 use num_cpus;
+
+const SIZE_MAX: u64 = u64::MAX;
 
 #[cfg(feature = "onnxruntime")]
 use ort::{
     Session, SessionBuilder, Value, GraphOptimizationLevel, Environment, 
-    LoggingLevel, OrtError, TensorElementDataType, ExecutionProvider,
-    tensor::ndarray_tensor::NdArrayTensor
+    LoggingLevel, OrtError, CUDAExecutionProviderOptions, CoreMLExecutionProviderOptions,
+    tensor::{FromArray, InputTensor, OrtOwnedTensor}
 };
 
 use crate::platform::{PlatformExecutionProvider, get_optimal_provider};
@@ -84,7 +87,10 @@ impl OnnxSession {
                     #[cfg(feature = "cuda")]
                     {
                         info!("Using CUDA execution provider");
-                        session_builder = session_builder.with_execution_providers(&[ort::ExecutionProvider::CUDA])?;
+                        let cuda_options = CUDAExecutionProviderOptions::default()
+                            .device_id(0)
+                            .gpu_mem_limit(SIZE_MAX as usize);
+                        session_builder = session_builder.with_execution_providers([cuda_options.into()])?;
                     }
                     
                     #[cfg(not(feature = "cuda"))]
@@ -96,7 +102,8 @@ impl OnnxSession {
                     #[cfg(feature = "coreml")]
                     {
                         info!("Using CoreML execution provider");
-                        session_builder = session_builder.with_execution_providers(&[ort::ExecutionProvider::COREML])?;
+                        let coreml_options = CoreMLExecutionProviderOptions::default();
+                        session_builder = session_builder.with_execution_providers([coreml_options.into()])?;
                     }
                     
                     #[cfg(not(feature = "coreml"))]
@@ -143,35 +150,42 @@ impl OnnxSession {
         #[cfg(feature = "onnxruntime")]
         {
             if let Some(session) = &self.session {
-                let mut input_values = Vec::new();
+                let mut input_tensors = HashMap::new();
                 
                 for (name, array) in &inputs {
                     if !self.input_names.contains(name) {
                         return Err(OnnxError::InvalidInput(format!("Unknown input name: {}", name)));
                     }
                     
-                    let dims = array.shape().to_vec();
-                    let flat_data = array.as_slice().unwrap_or(&[]).to_vec();
-                    
-                    let numpy = pyo3::Python::acquire_gil();
-                    let array_ref = array.view();
-                    let tensor = ort::tensor::ndarray_tensor::NdArrayTensor::from_array(array_ref)?;
-                    let value = Value::from_tensor(tensor)?;
-                    input_values.push(value);
+                    let array_view = array.view();
+                    let input_tensor = InputTensor::from_array(array_view)?;
+                    input_tensors.insert(name.clone(), input_tensor);
                 }
                 
-                let outputs = session.run(input_values)?;
+                let outputs = session.run_with_names(input_tensors)?;
                 
                 let mut result = HashMap::new();
                 
-                for (i, name) in self.output_names.iter().enumerate() {
-                    if i < outputs.len() {
-                        let tensor = outputs[i].extract::<f32>()?;
-                        let dims = tensor.dims().to_vec();
-                        let data = tensor.as_slice()?.to_vec();
+                for name in &self.output_names {
+                    if let Some(output) = outputs.get(name) {
+                        let tensor: OrtOwnedTensor<f32, _> = output.try_extract().map_err(|e| {
+                            OnnxError::InferenceError(format!("Failed to extract tensor data for {}: {}", name, e))
+                        })?;
+                        
+                        let dims: Vec<usize> = tensor.shape().iter()
+                            .map(|&d| d as usize)
+                            .collect();
+                        
+                        let data = tensor.view().as_slice().unwrap_or(&[]).to_vec();
+                        
                         let array = ArrayD::from_shape_vec(IxDyn(&dims), data)
-                            .map_err(|e| OnnxError::InferenceError(format!("Failed to convert output: {}", e)))?;
+                            .map_err(|e| OnnxError::InferenceError(
+                                format!("Failed to convert output to ndarray: {}", e)
+                            ))?;
+                        
                         result.insert(name.clone(), array);
+                    } else {
+                        warn!("Output '{}' not found in inference results", name);
                     }
                 }
                 
