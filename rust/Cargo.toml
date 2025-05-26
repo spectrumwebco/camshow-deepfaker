@@ -46,7 +46,7 @@ coreml = ["ort/coreml"]
 # UI dependencies
 [dependencies.dioxus]
 version = "0.4"
-features = ["router", "launch", "hot-reload"]
+features = ["router", "hot-reload"]
 
 [dependencies.dioxus-desktop]
 version = "0.4"
