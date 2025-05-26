@@ -1,12 +1,7 @@
 import cv2
 import numpy as np
 from typing import Optional, Tuple, Callable
-import platform
 import threading
-
-# Only import Windows-specific library if on Windows
-if platform.system() == "Windows":
-    from pygrabber.dshow_graph import FilterGraph
 
 
 class VideoCapturer:
@@ -18,44 +13,14 @@ class VideoCapturer:
         self.is_running = False
         self.cap = None
 
-        # Initialize Windows-specific components if on Windows
-        if platform.system() == "Windows":
-            self.graph = FilterGraph()
-            # Verify device exists
-            devices = self.graph.get_input_devices()
-            if self.device_index >= len(devices):
-                raise ValueError(
-                    f"Invalid device index {device_index}. Available devices: {len(devices)}"
-                )
-
     def start(self, width: int = 960, height: int = 540, fps: int = 60) -> bool:
         """Initialize and start video capture"""
         try:
-            if platform.system() == "Windows":
-                # Windows-specific capture methods
-                capture_methods = [
-                    (self.device_index, cv2.CAP_DSHOW),  # Try DirectShow first
-                    (self.device_index, cv2.CAP_ANY),  # Then try default backend
-                    (-1, cv2.CAP_ANY),  # Try -1 as fallback
-                    (0, cv2.CAP_ANY),  # Finally try 0 without specific backend
-                ]
-
-                for dev_id, backend in capture_methods:
-                    try:
-                        self.cap = cv2.VideoCapture(dev_id, backend)
-                        if self.cap.isOpened():
-                            break
-                        self.cap.release()
-                    except Exception:
-                        continue
-            else:
-                # Unix-like systems (Linux/Mac) capture method
-                self.cap = cv2.VideoCapture(self.device_index)
+            self.cap = cv2.VideoCapture(self.device_index)
 
             if not self.cap or not self.cap.isOpened():
                 raise RuntimeError("Failed to open camera")
 
-            # Configure format
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
             self.cap.set(cv2.CAP_PROP_FPS, fps)

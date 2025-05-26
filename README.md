@@ -20,13 +20,9 @@ This software is part of a project to help redistribute income from NSFW content
 
 Users are responsible for ensuring their use of the software complies with applicable laws and regulations.
 
-## Exclusive v2.0 Quick Start - Pre-built (Windows)
+## Quick Start
 
-  <a href="https://camshowdeepfaker.com/index.php/quickstart"> <img src="media/Download.png" width="285" height="77" />
-
-##### This is the fastest build you can get if you have a discrete NVIDIA or AMD GPU.
- 
-###### These Pre-builts are perfect for non-technical users or those who don't have time to, or can't manually install all the requirements. Just a heads-up: this is an open-source project, so you can also install it manually. This will be 60 days ahead on the open source version.
+This open-source project can be installed manually following the instructions below.
 
 ## TLDR; Live Deepfake in just 3 Clicks
 ![easysteps](https://github.com/user-attachments/assets/af825228-852c-411b-b787-ffd9aac72fc6)
@@ -99,11 +95,10 @@ This is more likely to work on your computer but will be slower as it utilizes t
 
 **1. Set up Your Platform**
 
--   Python (3.10 recommended)
+-   Python 3.10 (required)
 -   pip
 -   git
 -   [ffmpeg](https://www.youtube.com/watch?v=OlNWCpFdVMA) - ```iex (irm ffmpeg.tc.ht)```
--   [Visual Studio 2022 Runtimes (Windows)](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 
 **2. Clone the Repository**
 
@@ -259,20 +254,7 @@ pip install onnxruntime-coreml==1.13.1
 python run.py --execution-provider coreml
 ```
 
-**DirectML Execution Provider (Windows)**
 
-1. Install dependencies:
-
-```bash
-pip uninstall onnxruntime onnxruntime-directml
-pip install onnxruntime-directml==1.15.1
-```
-
-2. Usage:
-
-```bash
-python run.py --execution-provider directml
-```
 
 **OpenVINO™ Execution Provider (Intel)**
 
