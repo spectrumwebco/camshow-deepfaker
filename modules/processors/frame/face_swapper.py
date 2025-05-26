@@ -19,7 +19,7 @@ import os
 
 FACE_SWAPPER = None
 THREAD_LOCK = threading.Lock()
-NAME = "DLC.FACE-SWAPPER"
+NAME = "CAMSHOW.FACE-SWAPPER"
 
 abs_dir = os.path.dirname(os.path.abspath(__file__))
 models_dir = os.path.join(
