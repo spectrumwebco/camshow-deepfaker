@@ -58,24 +58,40 @@ fn detect_faces(
 fn download_models(
     model_dir: Option<String>,
     models: Option<Vec<String>>,
-) -> PyResult<bool> {
+) -> PyResult<Vec<String>> {
     let model_dir = model_dir.unwrap_or_else(|| "models".to_string());
     let model_manager = PyModelManager::new(Some(model_dir))?;
     
-    let models = models.unwrap_or_else(|| vec![
-        "inswapper_128.onnx".to_string(),
-        "buffalo_l.onnx".to_string(),
-        "gfpgan_1.4.onnx".to_string(),
-    ]);
-    
-    for model in models {
-        if !model_manager.model_exists(&model) {
-            match model_manager.get_model_path(&model) {
-                Ok(_) => println!("Downloaded model: {}", model),
-                Err(e) => println!("Failed to download model {}: {}", model, e),
+    if models.is_some() {
+        let models = models.unwrap();
+        let mut downloaded = Vec::new();
+        
+        for model in models {
+            if !model_manager.model_exists(&model) {
+                match model_manager.get_model_path(&model) {
+                    Ok(path) => {
+                        println!("Downloaded model: {}", model);
+                        downloaded.push(path);
+                    },
+                    Err(e) => println!("Failed to download model {}: {}", model, e),
+                }
+            } else {
+                println!("Model already exists: {}", model);
+                downloaded.push(model_manager.model_dir.clone() + "/" + &model);
+            }
+        }
+        
+        Ok(downloaded)
+    } else {
+        match model_manager.download_all_models() {
+            Ok(paths) => {
+                println!("Downloaded all required models");
+                Ok(paths)
+            },
+            Err(e) => {
+                println!("Failed to download all models: {}", e);
+                Err(e)
             }
         }
     }
-    
-    Ok(true)
 }
