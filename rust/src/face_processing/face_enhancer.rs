@@ -60,7 +60,7 @@ impl FaceEnhancer {
         }
     }
 
-    fn process_frame(&self, py: Python, target_frame: &PyAny) -> PyResult<PyObject> {
+    pub fn process_frame(&self, py: Python, target_frame: &PyAny) -> PyResult<PyObject> {
         if let Some(session) = &self.session {
             info!("Using ONNX session with provider: {:?}", session.execution_provider());
             
@@ -105,7 +105,7 @@ impl FaceEnhancer {
         Ok(target_frame.into_py(py))
     }
     
-    fn preprocess_frame(&self, py: Python, frame: &PyAny) -> PyResult<PyObject> {
+    pub fn preprocess_frame(&self, py: Python, frame: &PyAny) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         let frame_array = if frame.is_instance(numpy.getattr("ndarray")?)? {
             frame.to_object(py)
@@ -159,7 +159,7 @@ impl FaceEnhancer {
         Ok(frame_batched.into_py(py))
     }
     
-    fn postprocess_output(&self, py: Python, output: &PyAny, original_frame: &PyAny) -> PyResult<PyObject> {
+    pub fn postprocess_output(&self, py: Python, output: &PyAny, original_frame: &PyAny) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         
         let output_numpy = self.ndarray_to_numpy(py, output)?;
@@ -193,11 +193,11 @@ impl FaceEnhancer {
         Ok(output_uint8.into_py(py))
     }
     
-    fn numpy_to_ndarray(&self, py: Python, array: &PyAny) -> PyResult<PyObject> {
+    pub fn numpy_to_ndarray(&self, py: Python, array: &PyAny) -> PyResult<PyObject> {
         Ok(array.to_object(py))
     }
     
-    fn ndarray_to_numpy(&self, py: Python, array: &PyAny) -> PyResult<PyObject> {
+    pub fn ndarray_to_numpy(&self, py: Python, array: &PyAny) -> PyResult<PyObject> {
         Ok(array.to_object(py))
     }
 

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use log::{info, warn, error};
-use ndarray::{Array, ArrayD, IxDyn};
+use ndarray::{Array, ArrayD, IxDyn, Ix1, Ix2, Ix3, Ix4, Dimension};
 use num_cpus;
 
 const SIZE_MAX: u64 = u64::MAX;
@@ -24,8 +24,8 @@ impl From<PyErr> for OnnxError {
 use ort::{
     Session, SessionBuilder, GraphOptimizationLevel, Environment, 
     LoggingLevel, OrtError, 
-    ExecutionProvider, ExecutionProviderDispatch,
-    Value, ValueType
+    CUDAExecutionProviderOptions, CoreMLExecutionProviderOptions,
+    Value, ValueType, TensorElementDataType
 };
 
 use crate::platform::{PlatformExecutionProvider, get_optimal_provider};
@@ -95,48 +95,30 @@ impl OnnxSession {
                     #[cfg(feature = "cuda")]
                     {
                         info!("Using CUDA execution provider");
-                        let providers = vec![
-                            ExecutionProviderDispatch::CUDA(Default::default()),
-                            ExecutionProviderDispatch::CPU(Default::default()),
-                        ];
-                        session_builder = session_builder.with_execution_providers(providers)?;
+                        let cuda_options = CUDAExecutionProviderOptions::default();
+                        session_builder = session_builder.with_cuda_ep(cuda_options)?;
                     }
                     
                     #[cfg(not(feature = "cuda"))]
                     {
                         warn!("CUDA requested but not available, falling back to CPU");
-                        let providers = vec![
-                            ExecutionProviderDispatch::CPU(Default::default()),
-                        ];
-                        session_builder = session_builder.with_execution_providers(providers)?;
                     }
                 },
                 PlatformExecutionProvider::CoreML => {
                     #[cfg(feature = "coreml")]
                     {
                         info!("Using CoreML execution provider");
-                        let providers = vec![
-                            ExecutionProviderDispatch::CoreML(Default::default()),
-                            ExecutionProviderDispatch::CPU(Default::default()),
-                        ];
-                        session_builder = session_builder.with_execution_providers(providers)?;
+                        let coreml_options = CoreMLExecutionProviderOptions::default();
+                        session_builder = session_builder.with_coreml_ep(coreml_options)?;
                     }
                     
                     #[cfg(not(feature = "coreml"))]
                     {
                         warn!("CoreML requested but not available, falling back to CPU");
-                        let providers = vec![
-                            ExecutionProviderDispatch::CPU(Default::default()),
-                        ];
-                        session_builder = session_builder.with_execution_providers(providers)?;
                     }
                 },
                 PlatformExecutionProvider::CPU => {
                     info!("Using CPU execution provider");
-                    let providers = vec![
-                        ExecutionProviderDispatch::CPU(Default::default()),
-                    ];
-                    session_builder = session_builder.with_execution_providers(providers)?;
                 }
             }
             
@@ -203,12 +185,15 @@ impl OnnxSession {
                                         )
                                     };
                                     
+                                    let shape_usize: Vec<usize> = shape.iter().map(|&s| s as usize).collect();
+                                    
                                     let array = ndarray::Array::from_shape_vec(
-                                        ndarray::IxDyn(&shape), 
+                                        ndarray::IxDyn(&shape_usize), 
                                         data.to_vec()
                                     ).map_err(|e| OnnxError::InvalidInput(format!("Failed to create ndarray: {}", e)))?;
                                     
-                                    Value::from_array(session.allocator(), &array.into_dyn())?
+                                    let cow_array = array.into_dyn();
+                                    Value::from_array(session.allocator(), &cow_array)?
                                 },
                                 "float64" => {
                                     let data = unsafe {
@@ -218,12 +203,15 @@ impl OnnxSession {
                                         )
                                     };
                                     
+                                    let shape_usize: Vec<usize> = shape.iter().map(|&s| s as usize).collect();
+                                    
                                     let array = ndarray::Array::from_shape_vec(
-                                        ndarray::IxDyn(&shape), 
+                                        ndarray::IxDyn(&shape_usize), 
                                         data.to_vec()
                                     ).map_err(|e| OnnxError::InvalidInput(format!("Failed to create ndarray: {}", e)))?;
                                     
-                                    Value::from_array(session.allocator(), &array.into_dyn())?
+                                    let cow_array = array.into_dyn();
+                                    Value::from_array(session.allocator(), &cow_array)?
                                 },
                                 "int32" => {
                                     let data = unsafe {
@@ -233,12 +221,15 @@ impl OnnxSession {
                                         )
                                     };
                                     
+                                    let shape_usize: Vec<usize> = shape.iter().map(|&s| s as usize).collect();
+                                    
                                     let array = ndarray::Array::from_shape_vec(
-                                        ndarray::IxDyn(&shape), 
+                                        ndarray::IxDyn(&shape_usize), 
                                         data.to_vec()
                                     ).map_err(|e| OnnxError::InvalidInput(format!("Failed to create ndarray: {}", e)))?;
                                     
-                                    Value::from_array(session.allocator(), &array.into_dyn())?
+                                    let cow_array = array.into_dyn();
+                                    Value::from_array(session.allocator(), &cow_array)?
                                 },
                                 "int64" => {
                                     let data = unsafe {
@@ -248,20 +239,26 @@ impl OnnxSession {
                                         )
                                     };
                                     
+                                    let shape_usize: Vec<usize> = shape.iter().map(|&s| s as usize).collect();
+                                    
                                     let array = ndarray::Array::from_shape_vec(
-                                        ndarray::IxDyn(&shape), 
+                                        ndarray::IxDyn(&shape_usize), 
                                         data.to_vec()
                                     ).map_err(|e| OnnxError::InvalidInput(format!("Failed to create ndarray: {}", e)))?;
                                     
-                                    Value::from_array(session.allocator(), &array.into_dyn())?
+                                    let cow_array = array.into_dyn();
+                                    Value::from_array(session.allocator(), &cow_array)?
                                 },
                                 "uint8" => {
+                                    let shape_usize: Vec<usize> = shape.iter().map(|&s| s as usize).collect();
+                                    
                                     let array = ndarray::Array::from_shape_vec(
-                                        ndarray::IxDyn(&shape), 
+                                        ndarray::IxDyn(&shape_usize), 
                                         bytes.to_vec()
                                     ).map_err(|e| OnnxError::InvalidInput(format!("Failed to create ndarray: {}", e)))?;
                                     
-                                    Value::from_array(session.allocator(), &array.into_dyn())?
+                                    let cow_array = array.into_dyn();
+                                    Value::from_array(session.allocator(), &cow_array)?
                                 },
                                 _ => return Err(OnnxError::InvalidInput(format!("Unsupported data type: {}", dtype))),
                             };
@@ -280,9 +277,25 @@ impl OnnxSession {
                         if i < outputs.len() {
                             let output = &outputs[i];
                             
-                            let tensor_type = output.tensor_type()?;
-                            let dimensions = output.dimensions()?;
-                            let shape: Vec<i64> = dimensions.iter()
+                            let tensor_type = if output.is_tensor()? {
+                                match output.tensor_element_type()? {
+                                    TensorElementDataType::Float => ValueType::Float32,
+                                    TensorElementDataType::Double => ValueType::Float64,
+                                    TensorElementDataType::Int32 => ValueType::Int32,
+                                    TensorElementDataType::Int64 => ValueType::Int64,
+                                    TensorElementDataType::Uint8 => ValueType::Uint8,
+                                    _ => {
+                                        warn!("Unsupported tensor element type: {:?}", output.tensor_element_type()?);
+                                        ValueType::Float32 // Default to float32
+                                    }
+                                }
+                            } else {
+                                warn!("Output is not a tensor");
+                                ValueType::Float32 // Default to float32
+                            };
+                            
+                            let shape: Vec<i64> = output.dimensions()?
+                                .iter()
                                 .map(|&d| d.unwrap_or(1))
                                 .collect();
                             
@@ -530,6 +543,35 @@ impl PyOnnxSession {
             provider: format!("{:?}", session.execution_provider()).to_lowercase(),
             session: Arc::new(session),
         })
+    }
+    
+    fn run(&self, py: Python, inputs: &PyAny) -> PyResult<PyObject> {
+        let inputs_dict = inputs.extract::<pyo3::types::PyDict>()?;
+        let mut input_map = HashMap::new();
+        
+        for (key, value) in inputs_dict.iter() {
+            let key_str = key.extract::<String>()?;
+            input_map.insert(key_str, value.to_object(py));
+        }
+        
+        match self.session.run(input_map) {
+            Ok(outputs) => {
+                let output_dict = pyo3::types::PyDict::new(py);
+                for (key, value) in outputs {
+                    output_dict.set_item(key, value.as_ref(py))?;
+                }
+                Ok(output_dict.into())
+            },
+            Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())),
+        }
+    }
+    
+    fn input_names(&self) -> PyResult<Vec<String>> {
+        Ok(self.session.input_names().to_vec())
+    }
+    
+    fn output_names(&self) -> PyResult<Vec<String>> {
+        Ok(self.session.output_names().to_vec())
     }
     
     fn __repr__(&self) -> PyResult<String> {

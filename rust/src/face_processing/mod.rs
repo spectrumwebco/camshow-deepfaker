@@ -30,29 +30,41 @@ pub fn face_processing_module(_py: Python, m: &PyModule) -> PyResult<()> {
 #[pyfunction]
 fn swap_face(
     py: Python,
-    _source_image: &PyAny,
+    source_image: &PyAny,
     target_image: &PyAny,
-    _model_path: Option<String>,
+    model_path: Option<String>,
 ) -> PyResult<PyObject> {
-    Ok(target_image.into_py(py))
+    let model_path = model_path.unwrap_or_else(|| "models/inswapper_128.onnx".to_string());
+    
+    let swapper = FaceSwapper::new(Some(model_path), None);
+    
+    swapper.process_frame(py, source_image, target_image)
 }
 
 #[pyfunction]
 fn enhance_face(
     py: Python,
     image: &PyAny,
-    _model_path: Option<String>,
+    model_path: Option<String>,
 ) -> PyResult<PyObject> {
-    Ok(image.into_py(py))
+    let model_path = model_path.unwrap_or_else(|| "models/gfpgan_1.4.onnx".to_string());
+    
+    let enhancer = FaceEnhancer::new(Some(model_path), None);
+    
+    enhancer.process_frame(py, image)
 }
 
 #[pyfunction]
 fn detect_faces(
     py: Python,
-    _image: &PyAny,
+    image: &PyAny,
+    model_path: Option<String>,
 ) -> PyResult<PyObject> {
-    let empty_list = pyo3::types::PyList::empty(py);
-    Ok(empty_list.into_py(py))
+    let model_path = model_path.unwrap_or_else(|| "models/buffalo_l.onnx".to_string());
+    
+    let analyser = FaceAnalyser::new(Some(model_path), None);
+    
+    analyser.detect_faces(py, image)
 }
 
 #[pyfunction]
