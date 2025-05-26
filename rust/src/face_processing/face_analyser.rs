@@ -64,10 +64,6 @@ impl FaceAnalyser {
         if let Some(session) = &self.session {
             info!("Using ONNX session with provider: {:?}", session.execution_provider());
             
-            warn!("ONNX session implementation needs to be fixed, returning empty result");
-            return Ok(PyList::empty(py).into_py(py));
-            
-            /*
             let frame_array = self.preprocess_frame(py, frame)?;
             
             let input_names = session.input_names();
@@ -97,7 +93,6 @@ impl FaceAnalyser {
                     error!("Failed to run inference: {}", e);
                 }
             }
-            */
         } else {
             warn!("No ONNX session available, returning empty result");
         }

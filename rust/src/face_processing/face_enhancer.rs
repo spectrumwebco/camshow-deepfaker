@@ -64,10 +64,6 @@ impl FaceEnhancer {
         if let Some(session) = &self.session {
             info!("Using ONNX session with provider: {:?}", session.execution_provider());
             
-            warn!("ONNX session implementation needs to be fixed, returning unmodified frame");
-            return Ok(target_frame.into_py(py));
-            
-            /*
             let target_frame_array = self.preprocess_frame(py, target_frame)?;
             
             let input_names = session.input_names();
@@ -97,7 +93,6 @@ impl FaceEnhancer {
                     error!("Failed to run inference: {}", e);
                 }
             }
-            */
         } else {
             warn!("No ONNX session available, returning unmodified frame");
         }
