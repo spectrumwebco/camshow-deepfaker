@@ -240,18 +240,18 @@ impl FaceAnalyser {
             
             if !face.hasattr("get")? {
                 return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                    "Face must be a dictionary with bbox"
+                    "Face must be a dictionary with bbox and image"
                 ));
             }
             
-            let face_array = match face.call_method1("get", ("image",)) {
+            let face_image = match face.call_method1("get", ("image",)) {
                 Ok(image) => {
                     if image.is_none() {
                         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                             "Face dictionary must contain 'image' key"
                         ));
                     }
-                    self.numpy_to_ndarray(py, image)?
+                    image
                 },
                 Err(_) => {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -260,13 +260,27 @@ impl FaceAnalyser {
                 }
             };
             
+            let face_array = self.preprocess_face_image(py, face_image)?;
+            
+            let input_names = session.input_names();
+            if input_names.is_empty() {
+                warn!("Model doesn't have any inputs");
+                return Ok(PyList::empty(py).into_py(py));
+            }
+            
             let mut inputs = HashMap::new();
-            inputs.insert("input".to_string(), face_array);
+            inputs.insert(input_names[0].clone(), face_array);
             
             match session.run(inputs) {
                 Ok(outputs) => {
-                    if let Some(output) = outputs.get("output") {
-                        return self.ndarray_to_numpy(py, output);
+                    let output_names = session.output_names();
+                    if output_names.is_empty() {
+                        warn!("Model doesn't have any outputs");
+                        return Ok(PyList::empty(py).into_py(py));
+                    }
+                    
+                    if let Some(output) = outputs.get(&output_names[0]) {
+                        return self.process_landmark_output(py, output, face);
                     } else {
                         warn!("No output found in inference result");
                     }
@@ -280,6 +294,111 @@ impl FaceAnalyser {
         }
         
         Ok(PyList::empty(py).into_py(py))
+    }
+    
+    fn preprocess_face_image(&self, py: Python, face_image: &PyAny) -> PyResult<ArrayD<f32>> {
+        let numpy = py.import("numpy")?;
+        let face_array = if face_image.is_instance(numpy.getattr("ndarray")?)? {
+            face_image.to_object(py)
+        } else {
+            numpy.call_method1("array", (face_image,))?.to_object(py)
+        };
+        
+        let face_array = face_array.as_ref(py);
+        
+        let face_rgb = if face_array.getattr("ndim")?.extract::<usize>()? == 3 {
+            let channels = face_array.getattr("shape")?.extract::<Vec<usize>>()?[2];
+            if channels == 3 {
+                face_array.to_object(py)
+            } else if channels == 4 {
+                face_array.call_method("[:,:,:3]", (), None)?.to_object(py)
+            } else {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Unsupported number of channels: {}", channels)
+                ));
+            }
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Face must be a 3D array (height, width, channels)"
+            ));
+        };
+        
+        let cv2 = py.import("cv2")?;
+        let face_resized = cv2.call_method(
+            "resize", 
+            (face_rgb.as_ref(py), (192, 192)), 
+            Some(PyDict::new(py).set_item("interpolation", cv2.getattr("INTER_AREA")?)?)
+        )?;
+        
+        let face_normalized = face_resized.call_method1("astype", (numpy.getattr("float32")?,))?
+            .call_method1("__truediv__", (255.0,))?;
+        
+        let face_nchw = face_normalized.call_method1(
+            "transpose", 
+            (PyTuple::new(py, &[2, 0, 1]),)
+        )?;
+        
+        let face_batched = face_nchw.call_method1(
+            "reshape", 
+            (PyTuple::new(py, &[1, 3, 192, 192]),)
+        )?;
+        
+        self.numpy_to_ndarray(py, face_batched)
+    }
+    
+    fn process_landmark_output(&self, py: Python, output: &ArrayD<f32>, face: &PyAny) -> PyResult<PyObject> {
+        let numpy = py.import("numpy")?;
+        
+        let output_numpy = self.ndarray_to_numpy(py, output)?;
+        let output_array = output_numpy.as_ref(py);
+        
+        let bbox = match face.call_method1("get", ("bbox",)) {
+            Ok(bbox) => {
+                if bbox.is_none() {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "Face dictionary must contain 'bbox' key"
+                    ));
+                }
+                bbox
+            },
+            Err(_) => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Failed to get 'bbox' from face dictionary"
+                ));
+            }
+        };
+        
+        let x1 = bbox.call_method1("__getitem__", (0,))?.extract::<i32>()?;
+        let y1 = bbox.call_method1("__getitem__", (1,))?.extract::<i32>()?;
+        let x2 = bbox.call_method1("__getitem__", (2,))?.extract::<i32>()?;
+        let y2 = bbox.call_method1("__getitem__", (3,))?.extract::<i32>()?;
+        
+        let face_width = (x2 - x1) as f32;
+        let face_height = (y2 - y1) as f32;
+        
+        
+        let output_shape = output_array.getattr("shape")?.extract::<Vec<usize>>()?;
+        if output_shape.len() < 3 {
+            warn!("Unexpected output shape: {:?}", output_shape);
+            return Ok(PyList::empty(py).into_py(py));
+        }
+        
+        let num_landmarks = output_shape[1];
+        
+        let landmarks = PyList::empty(py);
+        
+        for i in 0..num_landmarks {
+            let landmark = output_array.call_method1("__getitem__", (PyTuple::new(py, &[0, i]),))?;
+            let x_norm = landmark.call_method1("__getitem__", (0,))?.extract::<f32>()?;
+            let y_norm = landmark.call_method1("__getitem__", (1,))?.extract::<f32>()?;
+            
+            let x = x1 as f32 + x_norm * face_width;
+            let y = y1 as f32 + y_norm * face_height;
+            
+            landmarks.append(PyTuple::new(py, &[x as i32, y as i32]))?;
+        }
+        
+        Ok(landmarks.into_py(py))
     }
     
     fn numpy_to_ndarray(&self, py: Python, array: &PyAny) -> PyResult<ArrayD<f32>> {
