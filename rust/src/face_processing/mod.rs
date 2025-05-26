@@ -69,7 +69,12 @@ fn download_models(
         for model in models {
             if model_manager.model_exists(&model) {
                 println!("Model already exists: {}", model);
-                let path = model_manager.model_dir.join(&model).to_string_lossy().to_string();
+                let model_path = model_manager.get_model_path(&model)
+                    .map_err(|e| {
+                        println!("Error getting model path: {}", e);
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                    })?;
+                let path = model_path.to_string_lossy().to_string();
                 downloaded.push(path);
             } else {
                 match model_manager.get_model_path(&model) {
@@ -86,9 +91,9 @@ fn download_models(
     } else {
         // Download all required models
         let required_models = vec![
-            "inswapper_128.onnx",
-            "buffalo_l.onnx",
-            "gfpgan_1.4.onnx",
+            "inswapper_128.onnx".to_string(),
+            "buffalo_l.onnx".to_string(),
+            "gfpgan_1.4.onnx".to_string(),
         ];
         
         let mut downloaded = Vec::new();

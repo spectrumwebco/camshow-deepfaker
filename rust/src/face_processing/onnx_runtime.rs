@@ -11,9 +11,13 @@ use ndarray::{Array, ArrayD, Dimension, IxDyn};
 use num_cpus;
 
 #[cfg(feature = "onnxruntime")]
-use ort::{Session, SessionBuilder, Value, GraphOptimizationLevel, Environment, LoggingLevel, OrtError, TensorElementDataType};
+use ort::{
+    Session, SessionBuilder, Value, GraphOptimizationLevel, Environment, 
+    LoggingLevel, OrtError, TensorElementDataType, ExecutionProvider,
+    tensor::ndarray_tensor::NdArrayTensor
+};
 
-use crate::platform::{ExecutionProvider, get_optimal_provider};
+use crate::platform::{ExecutionProvider as PlatformExecutionProvider, get_optimal_provider};
 
 #[derive(Debug, Error)]
 pub enum OnnxError {
@@ -42,7 +46,7 @@ pub enum OnnxError {
 
 pub struct OnnxSession {
     model_path: PathBuf,
-    execution_provider: ExecutionProvider,
+    execution_provider: PlatformExecutionProvider,
     
     #[cfg(feature = "onnxruntime")]
     session: Option<Session>,
@@ -55,7 +59,7 @@ pub struct OnnxSession {
 }
 
 impl OnnxSession {
-    pub fn new(model_path: impl AsRef<Path>, execution_provider: Option<ExecutionProvider>) -> Result<Self, OnnxError> {
+    pub fn new(model_path: impl AsRef<Path>, execution_provider: Option<PlatformExecutionProvider>) -> Result<Self, OnnxError> {
         let model_path = model_path.as_ref().to_path_buf();
         
         if !model_path.exists() {
@@ -73,14 +77,14 @@ impl OnnxSession {
             
             let mut session_builder = SessionBuilder::new(&environment)?
                 .with_optimization_level(GraphOptimizationLevel::Level3)?
-                .with_intra_threads(num_cpus::get())?;
+                .with_intra_threads(num_cpus::get() as i16)?;
             
             match execution_provider {
-                ExecutionProvider::CUDA => {
+                PlatformExecutionProvider::CUDA => {
                     #[cfg(feature = "cuda")]
                     {
                         info!("Using CUDA execution provider");
-                        session_builder = session_builder.with_cuda_provider()?;
+                        session_builder = session_builder.with_execution_providers(&[ort::ExecutionProvider::CUDA])?;
                     }
                     
                     #[cfg(not(feature = "cuda"))]
@@ -88,11 +92,11 @@ impl OnnxSession {
                         warn!("CUDA requested but not available, falling back to CPU");
                     }
                 },
-                ExecutionProvider::CoreML => {
+                PlatformExecutionProvider::CoreML => {
                     #[cfg(feature = "coreml")]
                     {
                         info!("Using CoreML execution provider");
-                        session_builder = session_builder.with_coreml_provider()?;
+                        session_builder = session_builder.with_execution_providers(&[ort::ExecutionProvider::COREML])?;
                     }
                     
                     #[cfg(not(feature = "coreml"))]
@@ -100,7 +104,7 @@ impl OnnxSession {
                         warn!("CoreML requested but not available, falling back to CPU");
                     }
                 },
-                ExecutionProvider::CPU => {
+                PlatformExecutionProvider::CPU => {
                     info!("Using CPU execution provider");
                 }
             }
@@ -149,7 +153,10 @@ impl OnnxSession {
                     let dims = array.shape().to_vec();
                     let flat_data = array.as_slice().unwrap_or(&[]).to_vec();
                     
-                    let value = Value::from_data_slice(&flat_data, &dims)?;
+                    let numpy = pyo3::Python::acquire_gil();
+                    let array_ref = array.view();
+                    let tensor = ort::tensor::ndarray_tensor::NdArrayTensor::from_array(array_ref)?;
+                    let value = Value::from_tensor(tensor)?;
                     input_values.push(value);
                 }
                 
@@ -159,10 +166,10 @@ impl OnnxSession {
                 
                 for (i, name) in self.output_names.iter().enumerate() {
                     if i < outputs.len() {
-                        let output = outputs[i].try_extract::<f32>()?;
-                        let shape = output.shape().to_vec();
-                        let data = output.as_slice().unwrap_or(&[]).to_vec();
-                        let array = ArrayD::from_shape_vec(IxDyn(&shape), data)
+                        let tensor = outputs[i].extract::<f32>()?;
+                        let dims = tensor.dims().to_vec();
+                        let data = tensor.as_slice()?.to_vec();
+                        let array = ArrayD::from_shape_vec(IxDyn(&dims), data)
                             .map_err(|e| OnnxError::InferenceError(format!("Failed to convert output: {}", e)))?;
                         result.insert(name.clone(), array);
                     }
@@ -180,7 +187,7 @@ impl OnnxSession {
         }
     }
     
-    pub fn execution_provider(&self) -> ExecutionProvider {
+    pub fn execution_provider(&self) -> PlatformExecutionProvider {
         self.execution_provider
     }
     
@@ -332,9 +339,9 @@ impl PyOnnxSession {
     #[new]
     fn new(model_path: String, provider: Option<String>) -> PyResult<Self> {
         let execution_provider = match provider.as_deref() {
-            Some("cuda") => Some(ExecutionProvider::CUDA),
-            Some("coreml") => Some(ExecutionProvider::CoreML),
-            Some("cpu") | None => Some(ExecutionProvider::CPU),
+            Some("cuda") => Some(PlatformExecutionProvider::CUDA),
+            Some("coreml") => Some(PlatformExecutionProvider::CoreML),
+            Some("cpu") | None => Some(PlatformExecutionProvider::CPU),
             Some(other) => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 format!("Unsupported execution provider: {}", other)
             )),
