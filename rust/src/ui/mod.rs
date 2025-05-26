@@ -1,8 +1,5 @@
 use pyo3::prelude::*;
 
-mod app;
-
-pub use app::App;
 
 #[pymodule]
 pub fn ui_module(py: Python, m: &PyModule) -> PyResult<()> {
@@ -22,13 +19,13 @@ impl AppWrapper {
     }
     
     fn launch(&self) -> PyResult<()> {
-        println!("Launching Dioxus UI...");
-        
+        println!("UI module temporarily disabled to focus on ONNX integration");
+        println!("Will be re-enabled when Dioxus dependencies are uncommented in Cargo.toml");
         
         Ok(())
     }
     
     fn __repr__(&self) -> PyResult<String> {
-        Ok("AppWrapper()".to_string())
+        Ok("AppWrapper(disabled=True)".to_string())
     }
 }
