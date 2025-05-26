@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "camshow-deepfaker"
+version = "1.8.0"
+description = "Real-time face swap and video deepfake with a single click"
+readme = "README.md"
+requires-python = "==3.10.*"
+license = {text = "AGPL-3.0-or-later"}
+authors = [
+    {name = "Spectrum Web Co", email = "oveshen.govender@gmail.com"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3.10",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "numpy>=1.23.5,<2",
+    "typing-extensions>=4.8.0",
+    "opencv-python==4.10.0.84",
+    "cv2_enumerate_cameras==1.1.15",
+    "onnx==1.16.0",
+    "insightface==0.7.3",
+    "psutil==5.9.8",
+    "tk==0.1.0",
+    "customtkinter==5.2.2",
+    "pillow==11.1.0",
+    "protobuf==4.23.2",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+    "pydantic>=2.6.0",
+]
+
+[project.optional-dependencies]
+linux = [
+    "torch==2.5.1+cu118",
+    "torchvision==0.20.1",
+    "onnxruntime-gpu==1.17",
+    "tensorflow",
+]
+macos = [
+    "torch==2.5.1",
+    "torchvision==0.20.1",
+]
+macos-silicon = [
+    "torch==2.5.1",
+    "torchvision==0.20.1",
+    "onnxruntime-silicon==1.16.3",
+]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/spectrumwebco/camshow-deepfaker"
+"Bug Tracker" = "https://github.com/spectrumwebco/camshow-deepfaker/issues"
+
+[tool.uv]
+python = "3.10"
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[tool.pytest]
+testpaths = ["tests"]
