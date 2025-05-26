@@ -65,7 +65,7 @@ dev = [
 "Bug Tracker" = "https://github.com/spectrumwebco/camshow-deepfaker/issues"
 
 [tool.uv]
-required-version = "3.10"
+python = "3.10.12"
 
 [tool.black]
 line-length = 88
