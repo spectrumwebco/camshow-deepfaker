@@ -60,7 +60,7 @@ impl FaceAnalyser {
         }
     }
 
-    fn detect_faces(&self, py: Python, frame: &PyAny) -> PyResult<PyObject> {
+    pub fn detect_faces(&self, py: Python, frame: &PyAny) -> PyResult<PyObject> {
         if let Some(session) = &self.session {
             info!("Using ONNX session with provider: {:?}", session.execution_provider());
             
@@ -105,7 +105,7 @@ impl FaceAnalyser {
         Ok(PyList::empty(py).into_py(py))
     }
     
-    fn preprocess_frame(&self, py: Python, frame: &PyAny) -> PyResult<PyObject> {
+    pub fn preprocess_frame(&self, py: Python, frame: &PyAny) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         let frame_array = if frame.is_instance(numpy.getattr("ndarray")?)? {
             frame.to_object(py)
@@ -159,7 +159,7 @@ impl FaceAnalyser {
         Ok(frame_batched.into_py(py))
     }
     
-    fn process_detection_output(&self, py: Python, output: &PyAny, original_frame: &PyAny) -> PyResult<PyObject> {
+    pub fn process_detection_output(&self, py: Python, output: &PyAny, original_frame: &PyAny) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         
         let output_numpy = self.ndarray_to_numpy(py, output)?;
@@ -244,7 +244,7 @@ impl FaceAnalyser {
         Ok(faces.into_py(py))
     }
 
-    fn get_landmarks(&self, py: Python, face: &PyAny) -> PyResult<PyObject> {
+    pub fn get_landmarks(&self, py: Python, face: &PyAny) -> PyResult<PyObject> {
         if let Some(session) = &self.session {
             info!("Using ONNX session with provider: {:?}", session.execution_provider());
             
@@ -311,7 +311,7 @@ impl FaceAnalyser {
         Ok(PyList::empty(py).into_py(py))
     }
     
-    fn preprocess_face_image(&self, py: Python, face_image: &PyAny) -> PyResult<PyObject> {
+    pub fn preprocess_face_image(&self, py: Python, face_image: &PyAny) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         let face_array = if face_image.is_instance(numpy.getattr("ndarray")?)? {
             face_image.to_object(py)
@@ -365,7 +365,7 @@ impl FaceAnalyser {
         Ok(face_batched.into_py(py))
     }
     
-    fn process_landmark_output(&self, py: Python, output: &PyAny, face: &PyAny) -> PyResult<PyObject> {
+    pub fn process_landmark_output(&self, py: Python, output: &PyAny, face: &PyAny) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         
         let output_numpy = self.ndarray_to_numpy(py, output)?;
@@ -421,11 +421,11 @@ impl FaceAnalyser {
         Ok(landmarks.into_py(py))
     }
     
-    fn numpy_to_ndarray(&self, py: Python, array: &PyAny) -> PyResult<PyObject> {
+    pub fn numpy_to_ndarray(&self, py: Python, array: &PyAny) -> PyResult<PyObject> {
         Ok(array.to_object(py))
     }
     
-    fn ndarray_to_numpy(&self, py: Python, array: &PyAny) -> PyResult<PyObject> {
+    pub fn ndarray_to_numpy(&self, py: Python, array: &PyAny) -> PyResult<PyObject> {
         Ok(array.to_object(py))
     }
 
