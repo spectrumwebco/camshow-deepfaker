@@ -186,18 +186,19 @@ impl FaceAnalyser {
         let confidence_threshold = 0.5;
         
         for i in 0..num_detections {
-            let detection = output_array.call_method1(py, "__getitem__", (PyTuple::new(py, &[0, i]),))?;
+            let idx = PyTuple::new(py, &[0, i]);
+            let detection = output_array.call_method1("__getitem__", (idx,))?;
             
-            let confidence = detection.call_method1(py, "__getitem__", (4,))?.extract::<f32>()?;
+            let confidence = detection.call_method1("__getitem__", (4,))?.extract::<f32>()?;
             
             if confidence < confidence_threshold {
                 continue;
             }
             
-            let x1 = detection.call_method1(py, "__getitem__", (0,))?.extract::<f32>()? * scale_x;
-            let y1 = detection.call_method1(py, "__getitem__", (1,))?.extract::<f32>()? * scale_y;
-            let x2 = detection.call_method1(py, "__getitem__", (2,))?.extract::<f32>()? * scale_x;
-            let y2 = detection.call_method1(py, "__getitem__", (3,))?.extract::<f32>()? * scale_y;
+            let x1 = detection.call_method1("__getitem__", (0,))?.extract::<f32>()? * scale_x;
+            let y1 = detection.call_method1("__getitem__", (1,))?.extract::<f32>()? * scale_y;
+            let x2 = detection.call_method1("__getitem__", (2,))?.extract::<f32>()? * scale_x;
+            let y2 = detection.call_method1("__getitem__", (3,))?.extract::<f32>()? * scale_y;
             
             let face_dict = PyDict::new(py);
             face_dict.set_item("confidence", confidence)?;
@@ -212,8 +213,8 @@ impl FaceAnalyser {
                 let landmarks = PyList::empty(py);
                 
                 for j in 0..5 {
-                    let landmark_x = detection.call_method1(py, "__getitem__", (5 + j * 2,))?.extract::<f32>()? * scale_x;
-                    let landmark_y = detection.call_method1(py, "__getitem__", (6 + j * 2,))?.extract::<f32>()? * scale_y;
+                    let landmark_x = detection.call_method1("__getitem__", (5 + j * 2,))?.extract::<f32>()? * scale_x;
+                    let landmark_y = detection.call_method1("__getitem__", (6 + j * 2,))?.extract::<f32>()? * scale_y;
                     
                     landmarks.append(PyTuple::new(py, &[landmark_x as i32, landmark_y as i32]))?;
                 }
@@ -406,9 +407,10 @@ impl FaceAnalyser {
         let landmarks = PyList::empty(py);
         
         for i in 0..num_landmarks {
-            let landmark = output_array.call_method1(py, "__getitem__", (PyTuple::new(py, &[0, i]),))?;
-            let x_norm = landmark.call_method1(py, "__getitem__", (0,))?.extract::<f32>()?;
-            let y_norm = landmark.call_method1(py, "__getitem__", (1,))?.extract::<f32>()?;
+            let idx = PyTuple::new(py, &[0, i]);
+            let landmark = output_array.call_method1("__getitem__", (idx,))?;
+            let x_norm = landmark.call_method1("__getitem__", (0,))?.extract::<f32>()?;
+            let y_norm = landmark.call_method1("__getitem__", (1,))?.extract::<f32>()?;
             
             let x = x1 as f32 + x_norm * face_width;
             let y = y1 as f32 + y_norm * face_height;

@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple, PyBytes};
+use pyo3::exceptions::PyRuntimeError;
+use pyo3::types::{PyDict, PyList};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use anyhow::{Result, anyhow};
@@ -8,17 +9,23 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use log::{info, warn, error};
-use ndarray::{ArrayD, IxDyn};
+use ndarray::{Array, ArrayD, IxDyn};
 use num_cpus;
 
 const SIZE_MAX: u64 = u64::MAX;
+
+impl From<PyErr> for OnnxError {
+    fn from(err: PyErr) -> Self {
+        OnnxError::InvalidInput(format!("Python error: {}", err))
+    }
+}
 
 #[cfg(feature = "onnxruntime")]
 use ort::{
     Session, SessionBuilder, GraphOptimizationLevel, Environment, 
     LoggingLevel, OrtError, 
-    execution_providers::{CUDAExecutionProviderOptions, CoreMLExecutionProviderOptions},
-    tensor::OrtOwnedTensor
+    ExecutionProvider, ExecutionProviderDispatch,
+    Value, ValueType
 };
 
 use crate::platform::{PlatformExecutionProvider, get_optimal_provider};
@@ -88,30 +95,48 @@ impl OnnxSession {
                     #[cfg(feature = "cuda")]
                     {
                         info!("Using CUDA execution provider");
-                        let cuda_options = CUDAExecutionProviderOptions::default();
-                        session_builder = session_builder.with_cuda_provider(cuda_options)?;
+                        let providers = vec![
+                            ExecutionProviderDispatch::CUDA(Default::default()),
+                            ExecutionProviderDispatch::CPU(Default::default()),
+                        ];
+                        session_builder = session_builder.with_execution_providers(providers)?;
                     }
                     
                     #[cfg(not(feature = "cuda"))]
                     {
                         warn!("CUDA requested but not available, falling back to CPU");
+                        let providers = vec![
+                            ExecutionProviderDispatch::CPU(Default::default()),
+                        ];
+                        session_builder = session_builder.with_execution_providers(providers)?;
                     }
                 },
                 PlatformExecutionProvider::CoreML => {
                     #[cfg(feature = "coreml")]
                     {
                         info!("Using CoreML execution provider");
-                        let coreml_options = CoreMLExecutionProviderOptions::default();
-                        session_builder = session_builder.with_coreml_provider(coreml_options)?;
+                        let providers = vec![
+                            ExecutionProviderDispatch::CoreML(Default::default()),
+                            ExecutionProviderDispatch::CPU(Default::default()),
+                        ];
+                        session_builder = session_builder.with_execution_providers(providers)?;
                     }
                     
                     #[cfg(not(feature = "coreml"))]
                     {
                         warn!("CoreML requested but not available, falling back to CPU");
+                        let providers = vec![
+                            ExecutionProviderDispatch::CPU(Default::default()),
+                        ];
+                        session_builder = session_builder.with_execution_providers(providers)?;
                     }
                 },
                 PlatformExecutionProvider::CPU => {
                     info!("Using CPU execution provider");
+                    let providers = vec![
+                        ExecutionProviderDispatch::CPU(Default::default()),
+                    ];
+                    session_builder = session_builder.with_execution_providers(providers)?;
                 }
             }
             
@@ -146,45 +171,176 @@ impl OnnxSession {
     }
     
     pub fn run(&self, inputs: HashMap<String, PyObject>) -> Result<HashMap<String, PyObject>, OnnxError> {
-        warn!("ONNX session implementation needs to be fixed, returning empty result");
-        
-        let mut result = HashMap::new();
-        for name in &self.output_names {
-        }
-        
-        Ok(result)
-        
-        /*
         #[cfg(feature = "onnxruntime")]
         {
             if let Some(session) = &self.session {
-                let mut input_values = Vec::new();
-                let mut input_names = Vec::new();
-                
-                for (name, array) in &inputs {
-                    if !self.input_names.contains(name) {
-                        return Err(OnnxError::InvalidInput(format!("Unknown input name: {}", name)));
+                Python::with_gil(|py| {
+                    let mut input_tensors = Vec::new();
+                    
+                    for name in &self.input_names {
+                        if let Some(array) = inputs.get(name) {
+                            let numpy = py.import("numpy")?;
+                            let array_ref = array.as_ref(py);
+                            
+                            let array_c = if array_ref.call_method0("flags")?.getattr("c_contiguous")?.extract::<bool>()? {
+                                array_ref.to_object(py)
+                            } else {
+                                array_ref.call_method0("copy")?.to_object(py)
+                            };
+                            
+                            let shape = array_ref.getattr("shape")?.extract::<Vec<i64>>()?;
+                            let dtype = array_ref.getattr("dtype")?.getattr("name")?.extract::<String>()?;
+                            
+                            let data = array_c.as_ref(py).call_method0("tobytes")?;
+                            let bytes = data.extract::<&[u8]>()?;
+                            
+                            let tensor = match dtype.as_str() {
+                                "float32" => {
+                                    let data = unsafe {
+                                        std::slice::from_raw_parts(
+                                            bytes.as_ptr() as *const f32,
+                                            bytes.len() / std::mem::size_of::<f32>()
+                                        )
+                                    };
+                                    
+                                    let array = ndarray::Array::from_shape_vec(
+                                        ndarray::IxDyn(&shape), 
+                                        data.to_vec()
+                                    ).map_err(|e| OnnxError::InvalidInput(format!("Failed to create ndarray: {}", e)))?;
+                                    
+                                    Value::from_array(session.allocator(), &array.into_dyn())?
+                                },
+                                "float64" => {
+                                    let data = unsafe {
+                                        std::slice::from_raw_parts(
+                                            bytes.as_ptr() as *const f64,
+                                            bytes.len() / std::mem::size_of::<f64>()
+                                        )
+                                    };
+                                    
+                                    let array = ndarray::Array::from_shape_vec(
+                                        ndarray::IxDyn(&shape), 
+                                        data.to_vec()
+                                    ).map_err(|e| OnnxError::InvalidInput(format!("Failed to create ndarray: {}", e)))?;
+                                    
+                                    Value::from_array(session.allocator(), &array.into_dyn())?
+                                },
+                                "int32" => {
+                                    let data = unsafe {
+                                        std::slice::from_raw_parts(
+                                            bytes.as_ptr() as *const i32,
+                                            bytes.len() / std::mem::size_of::<i32>()
+                                        )
+                                    };
+                                    
+                                    let array = ndarray::Array::from_shape_vec(
+                                        ndarray::IxDyn(&shape), 
+                                        data.to_vec()
+                                    ).map_err(|e| OnnxError::InvalidInput(format!("Failed to create ndarray: {}", e)))?;
+                                    
+                                    Value::from_array(session.allocator(), &array.into_dyn())?
+                                },
+                                "int64" => {
+                                    let data = unsafe {
+                                        std::slice::from_raw_parts(
+                                            bytes.as_ptr() as *const i64,
+                                            bytes.len() / std::mem::size_of::<i64>()
+                                        )
+                                    };
+                                    
+                                    let array = ndarray::Array::from_shape_vec(
+                                        ndarray::IxDyn(&shape), 
+                                        data.to_vec()
+                                    ).map_err(|e| OnnxError::InvalidInput(format!("Failed to create ndarray: {}", e)))?;
+                                    
+                                    Value::from_array(session.allocator(), &array.into_dyn())?
+                                },
+                                "uint8" => {
+                                    let array = ndarray::Array::from_shape_vec(
+                                        ndarray::IxDyn(&shape), 
+                                        bytes.to_vec()
+                                    ).map_err(|e| OnnxError::InvalidInput(format!("Failed to create ndarray: {}", e)))?;
+                                    
+                                    Value::from_array(session.allocator(), &array.into_dyn())?
+                                },
+                                _ => return Err(OnnxError::InvalidInput(format!("Unsupported data type: {}", dtype))),
+                            };
+                            
+                            input_tensors.push(tensor);
+                        } else {
+                            return Err(OnnxError::InvalidInput(format!("Missing input: {}", name)));
+                        }
                     }
                     
+                    let outputs = session.run(input_tensors)?;
                     
-                    input_values.push(value);
-                    input_names.push(name.clone());
-                }
-                
-                let outputs = session.run(input_values)?;
-                
-                let mut result = HashMap::new();
-                
-                for (i, name) in self.output_names.iter().enumerate() {
-                    if i < outputs.len() {
-                        
-                        result.insert(name.clone(), py_array);
-                    } else {
-                        warn!("Output '{}' not found in inference results (index {})", name, i);
+                    let mut result = HashMap::new();
+                    
+                    for (i, name) in self.output_names.iter().enumerate() {
+                        if i < outputs.len() {
+                            let output = &outputs[i];
+                            
+                            let tensor_type = output.tensor_type()?;
+                            let dimensions = output.dimensions()?;
+                            let shape: Vec<i64> = dimensions.iter()
+                                .map(|&d| d.unwrap_or(1))
+                                .collect();
+                            
+                            let numpy_array = match tensor_type {
+                                ValueType::Float32 => {
+                                    let tensor_data = output.try_extract::<f32>()?;
+                                    let data_vec = tensor_data.view().as_slice().unwrap_or(&[]).to_vec();
+                                    
+                                    let numpy = py.import("numpy")?;
+                                    let array = numpy.call_method1("array", (data_vec,))?;
+                                    array.call_method1("reshape", (shape,))?
+                                },
+                                ValueType::Float64 => {
+                                    let tensor_data = output.try_extract::<f64>()?;
+                                    let data_vec = tensor_data.view().as_slice().unwrap_or(&[]).to_vec();
+                                    
+                                    let numpy = py.import("numpy")?;
+                                    let array = numpy.call_method1("array", (data_vec,))?;
+                                    array.call_method1("reshape", (shape,))?
+                                },
+                                ValueType::Int32 => {
+                                    let tensor_data = output.try_extract::<i32>()?;
+                                    let data_vec = tensor_data.view().as_slice().unwrap_or(&[]).to_vec();
+                                    
+                                    let numpy = py.import("numpy")?;
+                                    let array = numpy.call_method1("array", (data_vec,))?;
+                                    array.call_method1("reshape", (shape,))?
+                                },
+                                ValueType::Int64 => {
+                                    let tensor_data = output.try_extract::<i64>()?;
+                                    let data_vec = tensor_data.view().as_slice().unwrap_or(&[]).to_vec();
+                                    
+                                    let numpy = py.import("numpy")?;
+                                    let array = numpy.call_method1("array", (data_vec,))?;
+                                    array.call_method1("reshape", (shape,))?
+                                },
+                                ValueType::Uint8 => {
+                                    let tensor_data = output.try_extract::<u8>()?;
+                                    let data_vec = tensor_data.view().as_slice().unwrap_or(&[]).to_vec();
+                                    
+                                    let numpy = py.import("numpy")?;
+                                    let array = numpy.call_method1("array", (data_vec,))?;
+                                    array.call_method1("reshape", (shape,))?
+                                },
+                                _ => {
+                                    warn!("Unsupported tensor type: {:?}", tensor_type);
+                                    py.import("numpy")?.call_method0("array")?
+                                }
+                            };
+                            
+                            result.insert(name.clone(), numpy_array.to_object(py));
+                        } else {
+                            warn!("Output '{}' not found in inference results (index {})", name, i);
+                        }
                     }
-                }
-                
-                Ok(result)
+                    
+                    Ok(result)
+                })
             } else {
                 Err(OnnxError::InferenceError("No session available".to_string()))
             }
@@ -192,9 +348,18 @@ impl OnnxSession {
         
         #[cfg(not(feature = "onnxruntime"))]
         {
-            Err(OnnxError::InferenceError("ONNX Runtime feature not enabled".to_string()))
+            warn!("ONNX Runtime feature not enabled, returning empty result");
+            Python::with_gil(|py| {
+                let mut result = HashMap::new();
+                for name in &self.output_names {
+                    let numpy = py.import("numpy")?;
+                    let empty_array = numpy.call_method0("array")?;
+                    result.insert(name.clone(), empty_array.to_object(py));
+                }
+                
+                Ok(result)
+            })
         }
-        */
     }
     
     pub fn execution_provider(&self) -> PlatformExecutionProvider {
