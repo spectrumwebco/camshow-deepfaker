@@ -1,0 +1,57 @@
+[package]
+name = "camshow_deepfaker"
+version = "0.1.0"
+edition = "2021"
+authors = ["Spectrum Web Co"]
+description = "High-performance face swapping and deepfake creation for camshow models"
+readme = "../README.md"
+license = "MIT"
+
+[lib]
+name = "camshow_deepfaker"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.19", features = ["extension-module", "abi3-py310"] }
+ndarray = { version = "0.15", features = ["rayon"] }
+image = "0.24"
+opencv = { version = "0.84", features = ["clang-runtime"] }
+anyhow = "1.0"
+thiserror = "1.0"
+rayon = "1.7"
+log = "0.4"
+env_logger = "0.10"
+tokio = { version = "1.28", features = ["full"] }
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Optional dependencies for GPU acceleration
+[features]
+default = []
+cuda = ["opencv/cuda"]
+coreml = []
+
+# UI dependencies
+[dependencies.dioxus]
+version = "0.4"
+features = ["desktop", "router", "launch", "hot-reload"]
+
+[dependencies.dioxus-desktop]
+version = "0.4"
+
+[dependencies.dioxus-web]
+version = "0.4"
+
+[dependencies.dioxus-hooks]
+version = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 1
