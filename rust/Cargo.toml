@@ -15,7 +15,7 @@ crate-type = ["cdylib", "rlib"]
 pyo3 = { version = "0.19", features = ["extension-module", "abi3-py310"] }
 ndarray = { version = "0.15", features = ["rayon"] }
 image = "0.24"
-opencv = { version = "0.84", features = ["clang-runtime"] }
+opencv = { version = "0.84", features = ["clang-runtime"], optional = true }
 anyhow = "1.0"
 thiserror = "1.0"
 rayon = "1.7"
