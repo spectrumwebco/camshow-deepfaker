@@ -99,7 +99,7 @@ fn download_models(
         let mut downloaded = Vec::new();
         
         for model_name in required_models {
-            match model_manager.get_model_path(model_name) {
+            match model_manager.get_model_path(&model_name) {
                 Ok(path) => {
                     println!("Downloaded model: {}", model_name);
                     downloaded.push(path.to_string_lossy().to_string());

@@ -8,16 +8,17 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use log::{info, warn, error};
-use ndarray::{ArrayD, IxDyn, Array};
+use ndarray::{ArrayD, IxDyn};
 use num_cpus;
 
 const SIZE_MAX: u64 = u64::MAX;
 
 #[cfg(feature = "onnxruntime")]
 use ort::{
-    Session, SessionBuilder, Value, GraphOptimizationLevel, Environment, 
-    LoggingLevel, OrtError, CUDAExecutionProviderOptions, CoreMLExecutionProviderOptions,
-    tensor::{FromArray, InputTensor, OrtOwnedTensor}
+    Session, SessionBuilder, GraphOptimizationLevel, Environment, 
+    LoggingLevel, OrtError, 
+    execution_providers::{CUDAExecutionProviderOptions, CoreMLExecutionProviderOptions},
+    tensor::OrtOwnedTensor
 };
 
 use crate::platform::{PlatformExecutionProvider, get_optimal_provider};
@@ -150,7 +151,8 @@ impl OnnxSession {
         #[cfg(feature = "onnxruntime")]
         {
             if let Some(session) = &self.session {
-                let mut input_tensors = HashMap::new();
+                let mut input_values = Vec::new();
+                let mut input_names = Vec::new();
                 
                 for (name, array) in &inputs {
                     if !self.input_names.contains(name) {
@@ -158,17 +160,25 @@ impl OnnxSession {
                     }
                     
                     let array_view = array.view();
-                    let input_tensor = InputTensor::from_array(array_view)?;
-                    input_tensors.insert(name.clone(), input_tensor);
+                    let tensor_values = array.as_slice().unwrap_or(&[]).to_vec();
+                    let tensor_shape = array.shape().iter().map(|&d| d as i64).collect::<Vec<i64>>();
+                    
+                    let value = ort::Value::tensor_from_data(
+                        &tensor_shape,
+                        tensor_values,
+                    )?;
+                    
+                    input_values.push(value);
+                    input_names.push(name.clone());
                 }
                 
-                let outputs = session.run_with_names(input_tensors)?;
+                let outputs = session.run(input_values)?;
                 
                 let mut result = HashMap::new();
                 
-                for name in &self.output_names {
-                    if let Some(output) = outputs.get(name) {
-                        let tensor: OrtOwnedTensor<f32, _> = output.try_extract().map_err(|e| {
+                for (i, name) in self.output_names.iter().enumerate() {
+                    if i < outputs.len() {
+                        let tensor: OrtOwnedTensor<f32, _> = outputs[i].try_extract().map_err(|e| {
                             OnnxError::InferenceError(format!("Failed to extract tensor data for {}: {}", name, e))
                         })?;
                         
@@ -185,7 +195,7 @@ impl OnnxSession {
                         
                         result.insert(name.clone(), array);
                     } else {
-                        warn!("Output '{}' not found in inference results", name);
+                        warn!("Output '{}' not found in inference results (index {})", name, i);
                     }
                 }
                 
