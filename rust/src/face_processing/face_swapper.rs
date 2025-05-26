@@ -7,7 +7,7 @@ use anyhow::Result;
 use log::{info, warn, error};
 use ndarray::{Array, ArrayD, Dimension, IxDyn};
 
-use crate::platform::{ExecutionProvider, get_optimal_provider};
+use crate::platform::{PlatformExecutionProvider, get_optimal_provider};
 use super::onnx_runtime::{OnnxSession, OnnxError, ModelManager};
 
 #[pyclass]
@@ -31,9 +31,9 @@ impl FaceSwapper {
         let model_manager = Arc::new(ModelManager::new("models"));
         
         let provider = match device.as_str() {
-            "cuda" => ExecutionProvider::CUDA,
-            "coreml" => ExecutionProvider::CoreML,
-            _ => ExecutionProvider::CPU,
+            "cuda" => PlatformExecutionProvider::CUDA,
+            "coreml" => PlatformExecutionProvider::CoreML,
+            _ => PlatformExecutionProvider::CPU,
         };
         
         let session = match model_manager.get_model_path(&model_path) {
