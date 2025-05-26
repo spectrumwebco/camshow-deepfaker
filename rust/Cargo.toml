@@ -44,18 +44,18 @@ cuda = ["ort/cuda"]
 coreml = ["ort/coreml"]
 
 # UI dependencies
-[dependencies.dioxus]
-version = "0.4"
-features = ["router", "hot-reload"]
-
-[dependencies.dioxus-desktop]
-version = "0.4"
-
-[dependencies.dioxus-web]
-version = "0.4"
-
-[dependencies.dioxus-hooks]
-version = "0.4"
+# UI dependencies temporarily disabled to focus on ONNX integration
+# [dependencies.dioxus]
+# version = "0.4"
+# 
+# [dependencies.dioxus-desktop]
+# version = "0.4"
+# 
+# [dependencies.dioxus-web]
+# version = "0.4"
+# 
+# [dependencies.dioxus-hooks]
+# version = "0.4"
 
 [profile.release]
 opt-level = 3
