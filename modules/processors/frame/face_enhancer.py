@@ -20,7 +20,7 @@ from modules.utilities import (
 FACE_ENHANCER = None
 THREAD_SEMAPHORE = threading.Semaphore()
 THREAD_LOCK = threading.Lock()
-NAME = "DLC.FACE-ENHANCER"
+NAME = "CAMSHOW.FACE-ENHANCER"
 
 abs_dir = os.path.dirname(os.path.abspath(__file__))
 models_dir = os.path.join(

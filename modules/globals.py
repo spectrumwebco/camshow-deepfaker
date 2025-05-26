@@ -22,7 +22,7 @@ keep_frames = False
 many_faces = False
 map_faces = False
 color_correction = False  # New global variable for color correction toggle
-nsfw_filter = False
+
 video_encoder = None
 video_quality = None
 live_mirror = False

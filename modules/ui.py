@@ -98,7 +98,7 @@ def save_switch_states():
         "many_faces": modules.globals.many_faces,
         "map_faces": modules.globals.map_faces,
         "color_correction": modules.globals.color_correction,
-        "nsfw_filter": modules.globals.nsfw_filter,
+
         "live_mirror": modules.globals.live_mirror,
         "live_resizable": modules.globals.live_resizable,
         "fp_ui": modules.globals.fp_ui,
@@ -120,7 +120,7 @@ def load_switch_states():
         modules.globals.many_faces = switch_states.get("many_faces", False)
         modules.globals.map_faces = switch_states.get("map_faces", False)
         modules.globals.color_correction = switch_states.get("color_correction", False)
-        modules.globals.nsfw_filter = switch_states.get("nsfw_filter", False)
+
         modules.globals.live_mirror = switch_states.get("live_mirror", False)
         modules.globals.live_resizable = switch_states.get("live_resizable", False)
         modules.globals.fp_ui = switch_states.get("fp_ui", {"face_enhancer": False})
@@ -253,9 +253,7 @@ def create_root(start: Callable[[], None], destroy: Callable[[], None]) -> ctk.C
     )
     color_correction_switch.place(relx=0.6, rely=0.70)
 
-    #    nsfw_value = ctk.BooleanVar(value=modules.globals.nsfw_filter)
-    #    nsfw_switch = ctk.CTkSwitch(root, text='NSFW filter', variable=nsfw_value, cursor='hand2', command=lambda: setattr(modules.globals, 'nsfw_filter', nsfw_value.get()))
-    #    nsfw_switch.place(relx=0.6, rely=0.7)
+
 
     map_faces = ctk.BooleanVar(value=modules.globals.map_faces)
     map_faces_switch = ctk.CTkSwitch(
@@ -673,26 +671,7 @@ def select_output_path(start: Callable[[], None]) -> None:
         start()
 
 
-def check_and_ignore_nsfw(target, destroy: Callable = None) -> bool:
-    """Check if the target is NSFW.
-    TODO: Consider to make blur the target.
-    """
-    from numpy import ndarray
-    from modules.predicter import predict_image, predict_video, predict_frame
 
-    if type(target) is str:  # image/video file path
-        check_nsfw = predict_image if has_image_extension(target) else predict_video
-    elif type(target) is ndarray:  # frame object
-        check_nsfw = predict_frame
-    if check_nsfw and check_nsfw(target):
-        if destroy:
-            destroy(
-                to_quit=False
-            )  # Do not need to destroy the window frame if the target is NSFW
-        update_status("Processing ignored!")
-        return True
-    else:
-        return False
 
 
 def fit_image_to_size(image, width: int, height: int):
@@ -759,8 +738,7 @@ def update_preview(frame_number: int = 0) -> None:
     if modules.globals.source_path and modules.globals.target_path:
         update_status("Processing...")
         temp_frame = get_video_frame(modules.globals.target_path, frame_number)
-        if modules.globals.nsfw_filter and check_and_ignore_nsfw(temp_frame):
-            return
+
         for frame_processor in get_frame_processors_modules(
                 modules.globals.frame_processors
         ):
@@ -911,7 +889,7 @@ def create_webcam_preview(camera_index: int):
                 source_image = get_one_face(cv2.imread(modules.globals.source_path))
 
             for frame_processor in frame_processors:
-                if frame_processor.NAME == "DLC.FACE-ENHANCER":
+                if frame_processor.NAME == "CAMSHOW.FACE-ENHANCER":
                     if modules.globals.fp_ui["face_enhancer"]:
                         temp_frame = frame_processor.process_frame(None, temp_frame)
                 else:
@@ -919,7 +897,7 @@ def create_webcam_preview(camera_index: int):
         else:
             modules.globals.target_path = None
             for frame_processor in frame_processors:
-                if frame_processor.NAME == "DLC.FACE-ENHANCER":
+                if frame_processor.NAME == "CAMSHOW.FACE-ENHANCER":
                     if modules.globals.fp_ui["face_enhancer"]:
                         temp_frame = frame_processor.process_frame_v2(temp_frame)
                 else:
