@@ -50,7 +50,6 @@ features = ["router", "hot-reload"]
 
 [dependencies.dioxus-desktop]
 version = "0.4"
-features = ["wry"]
 
 [dependencies.dioxus-web]
 version = "0.4"
