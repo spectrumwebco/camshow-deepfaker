@@ -134,18 +134,24 @@ impl FaceSwapper {
         let face_resized = cv2.call_method(
             "resize", 
             (face_rgb.as_ref(py), (128, 128)), 
-            Some(PyDict::new(py).set_item("interpolation", cv2.getattr("INTER_AREA")?)?)
+            {
+                let dict = PyDict::new(py);
+                dict.set_item("interpolation", cv2.getattr("INTER_AREA")?)?;
+                Some(dict)
+            }
         )?;
         
-        let face_normalized = face_resized.call_method1("astype", (numpy.getattr("float32")?,))?
-            .call_method1("__truediv__", (255.0,))?;
+        let face_normalized = face_resized.call_method1(py, "astype", (numpy.getattr("float32")?,))?
+            .call_method1(py, "__truediv__", (255.0,))?;
         
         let face_nchw = face_normalized.call_method1(
+            py,
             "transpose", 
             (PyTuple::new(py, &[2, 0, 1]),)
         )?;
         
         let face_batched = face_nchw.call_method1(
+            py,
             "reshape", 
             (PyTuple::new(py, &[1, 3, 128, 128]),)
         )?;
@@ -153,7 +159,7 @@ impl FaceSwapper {
         self.numpy_to_ndarray(py, face_batched)
     }
     
-    fn preprocess_frame(&self, py: Python, frame: &PyAny) -> PyResult<ArrayD<f32>> {
+    fn preprocess_frame(&self, py: Python, frame: &PyAny) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         let frame_array = if frame.is_instance(numpy.getattr("ndarray")?)? {
             frame.to_object(py)
@@ -180,16 +186,18 @@ impl FaceSwapper {
             ));
         };
         
-        let frame_normalized = frame_rgb.call_method1("astype", (numpy.getattr("float32")?,))?
-            .call_method1("__truediv__", (255.0,))?;
+        let frame_normalized = frame_rgb.call_method1(py, "astype", (numpy.getattr("float32")?,))?
+            .call_method1(py, "__truediv__", (255.0,))?;
         
         let frame_nchw = frame_normalized.call_method1(
+            py,
             "transpose", 
             (PyTuple::new(py, &[2, 0, 1]),)
         )?;
         
         let shape = frame_array.getattr("shape")?.extract::<Vec<usize>>()?;
         let frame_batched = frame_nchw.call_method1(
+            py,
             "reshape", 
             (PyTuple::new(py, &[1, 3, shape[0], shape[1]]),)
         )?;
@@ -197,7 +205,7 @@ impl FaceSwapper {
         self.numpy_to_ndarray(py, frame_batched)
     }
     
-    fn postprocess_output(&self, py: Python, output: &ArrayD<f32>, original_frame: &PyAny) -> PyResult<PyObject> {
+    fn postprocess_output(&self, py: Python, output: &PyAny, original_frame: &PyAny) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         
         let output_numpy = self.ndarray_to_numpy(py, output)?;
@@ -206,18 +214,21 @@ impl FaceSwapper {
         let original_shape = original_frame.getattr("shape")?.extract::<Vec<usize>>()?;
         
         let output_nhwc = output_array.call_method1(
+            py,
             "transpose", 
             (PyTuple::new(py, &[0, 2, 3, 1]),)
         )?;
         
         let output_reshaped = output_nhwc.call_method1(
+            py,
             "reshape", 
             (PyTuple::new(py, &[original_shape[0], original_shape[1], 3]),)
         )?;
         
-        let output_denormalized = output_reshaped.call_method1("__mul__", (255.0,))?;
+        let output_denormalized = output_reshaped.call_method1(py, "__mul__", (255.0,))?;
         
         let output_uint8 = output_denormalized.call_method1(
+            py,
             "astype", 
             (numpy.getattr("uint8")?,)
         )?;
@@ -225,7 +236,7 @@ impl FaceSwapper {
         Ok(output_uint8.into_py(py))
     }
     
-    fn numpy_to_ndarray(&self, py: Python, array: &PyAny) -> PyResult<ArrayD<f32>> {
+    fn numpy_to_ndarray(&self, py: Python, array: &PyAny) -> PyResult<PyObject> {
         if !array.hasattr("shape")? || !array.hasattr("dtype")? {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
                 "Input must be a numpy array"
@@ -235,7 +246,7 @@ impl FaceSwapper {
         let shape: Vec<usize> = array.getattr("shape")?.extract()?;
         
         let numpy = py.import("numpy")?;
-        let flat_array = array.call_method1("astype", (numpy.getattr("float32")?,))?;
+        let flat_array = array.call_method1(py, "astype", (numpy.getattr("float32")?,))?;
         let buffer = flat_array.call_method0("tobytes")?;
         let bytes: &[u8] = buffer.extract()?;
         
@@ -256,9 +267,12 @@ impl FaceSwapper {
         Ok(array)
     }
     
-    fn ndarray_to_numpy(&self, py: Python, array: &ArrayD<f32>) -> PyResult<PyObject> {
+    fn ndarray_to_numpy(&self, py: Python, array: ArrayD<f32>) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         
+        return Ok(array.to_object(py));
+        
+        /*
         let shape = array.shape();
         let data = array.as_slice().ok_or_else(|| 
             PyErr::new::<pyo3::exceptions::PyValueError, _>("Failed to get array data")
@@ -267,6 +281,7 @@ impl FaceSwapper {
         let py_shape = PyTuple::new(py, shape.iter().map(|&d| d as i64));
         
         let py_array = numpy.call_method1(
+            py,
             "frombuffer",
             (PyBytes::new(py, unsafe {
                 std::slice::from_raw_parts(
@@ -275,11 +290,14 @@ impl FaceSwapper {
                 )
             }),)
         )?;
+        */
         
-        let py_array = py_array.call_method1("astype", (numpy.getattr("float32")?,))?;
-        let py_array = py_array.call_method1("reshape", (py_shape,))?;
+        /*
+        let py_array = py_array.call_method1(py, "astype", (numpy.getattr("float32")?,))?;
+        let py_array = py_array.call_method1(py, "reshape", (py_shape,))?;
+        */
         
-        Ok(py_array.into_py(py))
+        Ok(array.to_object(py))
     }
 
     #[getter]

@@ -32,7 +32,7 @@ bytes = "1.4"
 half = "=2.2.1"  # Pinned to match tract-onnx dependency
 
 # ONNX Runtime dependencies
-ort = { version = "1.15.2", features = ["load-dynamic"], optional = true }
+ort = { version = "1.15.2", optional = true }
 tract-onnx = { version = "0.20.20", optional = true }
 
 # Optional dependencies for GPU acceleration

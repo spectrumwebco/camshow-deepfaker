@@ -131,18 +131,24 @@ impl FaceAnalyser {
         let frame_resized = cv2.call_method(
             "resize", 
             (frame_rgb.as_ref(py), (640, 640)), 
-            Some(PyDict::new(py).set_item("interpolation", cv2.getattr("INTER_AREA")?)?)
+            {
+                let dict = PyDict::new(py);
+                dict.set_item("interpolation", cv2.getattr("INTER_AREA")?)?;
+                Some(dict)
+            }
         )?;
         
-        let frame_normalized = frame_resized.call_method1("astype", (numpy.getattr("float32")?,))?
-            .call_method1("__truediv__", (255.0,))?;
+        let frame_normalized = frame_resized.call_method1(py, "astype", (numpy.getattr("float32")?,))?
+            .call_method1(py, "__truediv__", (255.0,))?;
         
         let frame_nchw = frame_normalized.call_method1(
+            py,
             "transpose", 
             (PyTuple::new(py, &[2, 0, 1]),)
         )?;
         
         let frame_batched = frame_nchw.call_method1(
+            py,
             "reshape", 
             (PyTuple::new(py, &[1, 3, 640, 640]),)
         )?;
@@ -150,7 +156,7 @@ impl FaceAnalyser {
         self.numpy_to_ndarray(py, frame_batched)
     }
     
-    fn process_detection_output(&self, py: Python, output: &ArrayD<f32>, original_frame: &PyAny) -> PyResult<PyObject> {
+    fn process_detection_output(&self, py: Python, output: &PyAny, original_frame: &PyAny) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         
         let output_numpy = self.ndarray_to_numpy(py, output)?;
@@ -177,18 +183,18 @@ impl FaceAnalyser {
         let confidence_threshold = 0.5;
         
         for i in 0..num_detections {
-            let detection = output_array.call_method1("__getitem__", (PyTuple::new(py, &[0, i]),))?;
+            let detection = output_array.call_method1(py, "__getitem__", (PyTuple::new(py, &[0, i]),))?;
             
-            let confidence = detection.call_method1("__getitem__", (4,))?.extract::<f32>()?;
+            let confidence = detection.call_method1(py, "__getitem__", (4,))?.extract::<f32>()?;
             
             if confidence < confidence_threshold {
                 continue;
             }
             
-            let x1 = detection.call_method1("__getitem__", (0,))?.extract::<f32>()? * scale_x;
-            let y1 = detection.call_method1("__getitem__", (1,))?.extract::<f32>()? * scale_y;
-            let x2 = detection.call_method1("__getitem__", (2,))?.extract::<f32>()? * scale_x;
-            let y2 = detection.call_method1("__getitem__", (3,))?.extract::<f32>()? * scale_y;
+            let x1 = detection.call_method1(py, "__getitem__", (0,))?.extract::<f32>()? * scale_x;
+            let y1 = detection.call_method1(py, "__getitem__", (1,))?.extract::<f32>()? * scale_y;
+            let x2 = detection.call_method1(py, "__getitem__", (2,))?.extract::<f32>()? * scale_x;
+            let y2 = detection.call_method1(py, "__getitem__", (3,))?.extract::<f32>()? * scale_y;
             
             let face_dict = PyDict::new(py);
             face_dict.set_item("confidence", confidence)?;
@@ -203,8 +209,8 @@ impl FaceAnalyser {
                 let landmarks = PyList::empty(py);
                 
                 for j in 0..5 {
-                    let landmark_x = detection.call_method1("__getitem__", (5 + j * 2,))?.extract::<f32>()? * scale_x;
-                    let landmark_y = detection.call_method1("__getitem__", (6 + j * 2,))?.extract::<f32>()? * scale_y;
+                    let landmark_x = detection.call_method1(py, "__getitem__", (5 + j * 2,))?.extract::<f32>()? * scale_x;
+                    let landmark_y = detection.call_method1(py, "__getitem__", (6 + j * 2,))?.extract::<f32>()? * scale_y;
                     
                     landmarks.append(PyTuple::new(py, &[landmark_x as i32, landmark_y as i32]))?;
                 }
@@ -327,18 +333,24 @@ impl FaceAnalyser {
         let face_resized = cv2.call_method(
             "resize", 
             (face_rgb.as_ref(py), (192, 192)), 
-            Some(PyDict::new(py).set_item("interpolation", cv2.getattr("INTER_AREA")?)?)
+            {
+                let dict = PyDict::new(py);
+                dict.set_item("interpolation", cv2.getattr("INTER_AREA")?)?;
+                Some(dict)
+            }
         )?;
         
-        let face_normalized = face_resized.call_method1("astype", (numpy.getattr("float32")?,))?
-            .call_method1("__truediv__", (255.0,))?;
+        let face_normalized = face_resized.call_method1(py, "astype", (numpy.getattr("float32")?,))?
+            .call_method1(py, "__truediv__", (255.0,))?;
         
         let face_nchw = face_normalized.call_method1(
+            py,
             "transpose", 
             (PyTuple::new(py, &[2, 0, 1]),)
         )?;
         
         let face_batched = face_nchw.call_method1(
+            py,
             "reshape", 
             (PyTuple::new(py, &[1, 3, 192, 192]),)
         )?;
@@ -346,7 +358,7 @@ impl FaceAnalyser {
         self.numpy_to_ndarray(py, face_batched)
     }
     
-    fn process_landmark_output(&self, py: Python, output: &ArrayD<f32>, face: &PyAny) -> PyResult<PyObject> {
+    fn process_landmark_output(&self, py: Python, output: &PyAny, face: &PyAny) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         
         let output_numpy = self.ndarray_to_numpy(py, output)?;
@@ -388,9 +400,9 @@ impl FaceAnalyser {
         let landmarks = PyList::empty(py);
         
         for i in 0..num_landmarks {
-            let landmark = output_array.call_method1("__getitem__", (PyTuple::new(py, &[0, i]),))?;
-            let x_norm = landmark.call_method1("__getitem__", (0,))?.extract::<f32>()?;
-            let y_norm = landmark.call_method1("__getitem__", (1,))?.extract::<f32>()?;
+            let landmark = output_array.call_method1(py, "__getitem__", (PyTuple::new(py, &[0, i]),))?;
+            let x_norm = landmark.call_method1(py, "__getitem__", (0,))?.extract::<f32>()?;
+            let y_norm = landmark.call_method1(py, "__getitem__", (1,))?.extract::<f32>()?;
             
             let x = x1 as f32 + x_norm * face_width;
             let y = y1 as f32 + y_norm * face_height;
@@ -401,7 +413,7 @@ impl FaceAnalyser {
         Ok(landmarks.into_py(py))
     }
     
-    fn numpy_to_ndarray(&self, py: Python, array: &PyAny) -> PyResult<ArrayD<f32>> {
+    fn numpy_to_ndarray(&self, py: Python, array: &PyAny) -> PyResult<PyObject> {
         if !array.hasattr("shape")? || !array.hasattr("dtype")? {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
                 "Input must be a numpy array"
@@ -432,9 +444,12 @@ impl FaceAnalyser {
         Ok(array)
     }
     
-    fn ndarray_to_numpy(&self, py: Python, array: &ArrayD<f32>) -> PyResult<PyObject> {
+    fn ndarray_to_numpy(&self, py: Python, array: ArrayD<f32>) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         
+        return Ok(array.to_object(py));
+        
+        /*
         let shape = array.shape();
         let data = array.as_slice().ok_or_else(|| 
             PyErr::new::<pyo3::exceptions::PyValueError, _>("Failed to get array data")
@@ -443,6 +458,7 @@ impl FaceAnalyser {
         let py_shape = PyTuple::new(py, shape.iter().map(|&d| d as i64));
         
         let py_array = numpy.call_method1(
+            py,
             "frombuffer",
             (PyBytes::new(py, unsafe {
                 std::slice::from_raw_parts(
@@ -451,9 +467,10 @@ impl FaceAnalyser {
                 )
             }),)
         )?;
+        */
         
-        let py_array = py_array.call_method1("astype", (numpy.getattr("float32")?,))?;
-        let py_array = py_array.call_method1("reshape", (py_shape,))?;
+        let py_array = py_array.call_method1(py, "astype", (numpy.getattr("float32")?,))?;
+        let py_array = py_array.call_method1(py, "reshape", (py_shape,))?;
         
         Ok(py_array.into_py(py))
     }
