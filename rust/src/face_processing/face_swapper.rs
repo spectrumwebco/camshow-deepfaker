@@ -1,9 +1,11 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::{PyBytes, PyDict, PyTuple};
 use std::path::Path;
 use std::sync::Arc;
+use std::collections::HashMap;
 use anyhow::Result;
 use log::{info, warn, error};
+use ndarray::{Array, ArrayD, Dimension, IxDyn};
 
 use crate::platform::{ExecutionProvider, get_optimal_provider};
 use super::onnx_runtime::{OnnxSession, OnnxError, ModelManager};
@@ -59,14 +61,90 @@ impl FaceSwapper {
     }
 
     fn process_frame(&self, py: Python, source_face: &PyAny, target_frame: &PyAny) -> PyResult<PyObject> {
-        
         if let Some(session) = &self.session {
             info!("Using ONNX session with provider: {:?}", session.execution_provider());
+            
+            let source_face_array = self.numpy_to_ndarray(py, source_face)?;
+            let target_frame_array = self.numpy_to_ndarray(py, target_frame)?;
+            
+            let mut inputs = HashMap::new();
+            inputs.insert("source_face".to_string(), source_face_array);
+            inputs.insert("target_frame".to_string(), target_frame_array);
+            
+            match session.run(inputs) {
+                Ok(outputs) => {
+                    if let Some(output) = outputs.get("output") {
+                        return self.ndarray_to_numpy(py, output);
+                    } else {
+                        warn!("No output found in inference result");
+                    }
+                },
+                Err(e) => {
+                    error!("Failed to run inference: {}", e);
+                }
+            }
         } else {
             warn!("No ONNX session available, returning unmodified frame");
         }
         
         Ok(target_frame.into_py(py))
+    }
+    
+    fn numpy_to_ndarray(&self, py: Python, array: &PyAny) -> PyResult<ArrayD<f32>> {
+        if !array.hasattr("shape")? || !array.hasattr("dtype")? {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Input must be a numpy array"
+            ));
+        }
+        
+        let shape: Vec<usize> = array.getattr("shape")?.extract()?;
+        
+        let numpy = py.import("numpy")?;
+        let flat_array = array.call_method1("astype", (numpy.getattr("float32")?,))?;
+        let buffer = flat_array.call_method0("tobytes")?;
+        let bytes: &[u8] = buffer.extract()?;
+        
+        let float_slice: &[f32] = unsafe {
+            std::slice::from_raw_parts(
+                bytes.as_ptr() as *const f32,
+                bytes.len() / std::mem::size_of::<f32>(),
+            )
+        };
+        
+        let array = ArrayD::from_shape_vec(
+            IxDyn(&shape),
+            float_slice.to_vec(),
+        ).map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            format!("Failed to create ndarray: {}", e)
+        ))?;
+        
+        Ok(array)
+    }
+    
+    fn ndarray_to_numpy(&self, py: Python, array: &ArrayD<f32>) -> PyResult<PyObject> {
+        let numpy = py.import("numpy")?;
+        
+        let shape = array.shape();
+        let data = array.as_slice().ok_or_else(|| 
+            PyErr::new::<pyo3::exceptions::PyValueError, _>("Failed to get array data")
+        )?;
+        
+        let py_shape = PyTuple::new(py, shape.iter().map(|&d| d as i64));
+        
+        let py_array = numpy.call_method1(
+            "frombuffer",
+            (PyBytes::new(py, unsafe {
+                std::slice::from_raw_parts(
+                    data.as_ptr() as *const u8,
+                    data.len() * std::mem::size_of::<f32>(),
+                )
+            }),)
+        )?;
+        
+        let py_array = py_array.call_method1("astype", (numpy.getattr("float32")?,))?;
+        let py_array = py_array.call_method1("reshape", (py_shape,))?;
+        
+        Ok(py_array.into_py(py))
     }
 
     #[getter]
