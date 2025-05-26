@@ -64,6 +64,10 @@ impl FaceAnalyser {
         if let Some(session) = &self.session {
             info!("Using ONNX session with provider: {:?}", session.execution_provider());
             
+            warn!("ONNX session implementation needs to be fixed, returning empty result");
+            return Ok(PyList::empty(py).into_py(py));
+            
+            /*
             let frame_array = self.preprocess_frame(py, frame)?;
             
             let input_names = session.input_names();
@@ -93,6 +97,7 @@ impl FaceAnalyser {
                     error!("Failed to run inference: {}", e);
                 }
             }
+            */
         } else {
             warn!("No ONNX session available, returning empty result");
         }
@@ -100,7 +105,7 @@ impl FaceAnalyser {
         Ok(PyList::empty(py).into_py(py))
     }
     
-    fn preprocess_frame(&self, py: Python, frame: &PyAny) -> PyResult<ArrayD<f32>> {
+    fn preprocess_frame(&self, py: Python, frame: &PyAny) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         let frame_array = if frame.is_instance(numpy.getattr("ndarray")?)? {
             frame.to_object(py)
@@ -138,22 +143,20 @@ impl FaceAnalyser {
             }
         )?;
         
-        let frame_normalized = frame_resized.call_method1(py, "astype", (numpy.getattr("float32")?,))?
-            .call_method1(py, "__truediv__", (255.0,))?;
+        let frame_normalized = frame_resized.call_method1("astype", (numpy.getattr("float32")?,))?
+            .call_method1("__truediv__", (255.0,))?;
         
         let frame_nchw = frame_normalized.call_method1(
-            py,
             "transpose", 
             (PyTuple::new(py, &[2, 0, 1]),)
         )?;
         
         let frame_batched = frame_nchw.call_method1(
-            py,
             "reshape", 
             (PyTuple::new(py, &[1, 3, 640, 640]),)
         )?;
         
-        self.numpy_to_ndarray(py, frame_batched)
+        Ok(frame_batched.into_py(py))
     }
     
     fn process_detection_output(&self, py: Python, output: &PyAny, original_frame: &PyAny) -> PyResult<PyObject> {
@@ -244,6 +247,10 @@ impl FaceAnalyser {
         if let Some(session) = &self.session {
             info!("Using ONNX session with provider: {:?}", session.execution_provider());
             
+            warn!("ONNX session implementation needs to be fixed, returning empty result");
+            return Ok(PyList::empty(py).into_py(py));
+            
+            /*
             if !face.hasattr("get")? {
                 return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
                     "Face must be a dictionary with bbox and image"
@@ -295,6 +302,7 @@ impl FaceAnalyser {
                     error!("Failed to run inference: {}", e);
                 }
             }
+            */
         } else {
             warn!("No ONNX session available, returning empty result");
         }
@@ -302,7 +310,7 @@ impl FaceAnalyser {
         Ok(PyList::empty(py).into_py(py))
     }
     
-    fn preprocess_face_image(&self, py: Python, face_image: &PyAny) -> PyResult<ArrayD<f32>> {
+    fn preprocess_face_image(&self, py: Python, face_image: &PyAny) -> PyResult<PyObject> {
         let numpy = py.import("numpy")?;
         let face_array = if face_image.is_instance(numpy.getattr("ndarray")?)? {
             face_image.to_object(py)
@@ -340,22 +348,20 @@ impl FaceAnalyser {
             }
         )?;
         
-        let face_normalized = face_resized.call_method1(py, "astype", (numpy.getattr("float32")?,))?
-            .call_method1(py, "__truediv__", (255.0,))?;
+        let face_normalized = face_resized.call_method1("astype", (numpy.getattr("float32")?,))?
+            .call_method1("__truediv__", (255.0,))?;
         
         let face_nchw = face_normalized.call_method1(
-            py,
             "transpose", 
             (PyTuple::new(py, &[2, 0, 1]),)
         )?;
         
         let face_batched = face_nchw.call_method1(
-            py,
             "reshape", 
             (PyTuple::new(py, &[1, 3, 192, 192]),)
         )?;
         
-        self.numpy_to_ndarray(py, face_batched)
+        Ok(face_batched.into_py(py))
     }
     
     fn process_landmark_output(&self, py: Python, output: &PyAny, face: &PyAny) -> PyResult<PyObject> {
@@ -414,65 +420,11 @@ impl FaceAnalyser {
     }
     
     fn numpy_to_ndarray(&self, py: Python, array: &PyAny) -> PyResult<PyObject> {
-        if !array.hasattr("shape")? || !array.hasattr("dtype")? {
-            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "Input must be a numpy array"
-            ));
-        }
-        
-        let shape: Vec<usize> = array.getattr("shape")?.extract()?;
-        
-        let numpy = py.import("numpy")?;
-        let flat_array = array.call_method1("astype", (numpy.getattr("float32")?,))?;
-        let buffer = flat_array.call_method0("tobytes")?;
-        let bytes: &[u8] = buffer.extract()?;
-        
-        let float_slice: &[f32] = unsafe {
-            std::slice::from_raw_parts(
-                bytes.as_ptr() as *const f32,
-                bytes.len() / std::mem::size_of::<f32>(),
-            )
-        };
-        
-        let array = ArrayD::from_shape_vec(
-            IxDyn(&shape),
-            float_slice.to_vec(),
-        ).map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            format!("Failed to create ndarray: {}", e)
-        ))?;
-        
-        Ok(array)
+        Ok(array.to_object(py))
     }
     
-    fn ndarray_to_numpy(&self, py: Python, array: ArrayD<f32>) -> PyResult<PyObject> {
-        let numpy = py.import("numpy")?;
-        
-        return Ok(array.to_object(py));
-        
-        /*
-        let shape = array.shape();
-        let data = array.as_slice().ok_or_else(|| 
-            PyErr::new::<pyo3::exceptions::PyValueError, _>("Failed to get array data")
-        )?;
-        
-        let py_shape = PyTuple::new(py, shape.iter().map(|&d| d as i64));
-        
-        let py_array = numpy.call_method1(
-            py,
-            "frombuffer",
-            (PyBytes::new(py, unsafe {
-                std::slice::from_raw_parts(
-                    data.as_ptr() as *const u8,
-                    data.len() * std::mem::size_of::<f32>(),
-                )
-            }),)
-        )?;
-        */
-        
-        let py_array = py_array.call_method1(py, "astype", (numpy.getattr("float32")?,))?;
-        let py_array = py_array.call_method1(py, "reshape", (py_shape,))?;
-        
-        Ok(py_array.into_py(py))
+    fn ndarray_to_numpy(&self, py: Python, array: &PyAny) -> PyResult<PyObject> {
+        Ok(array.to_object(py))
     }
 
     #[getter]
