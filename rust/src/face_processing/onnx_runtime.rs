@@ -88,9 +88,7 @@ impl OnnxSession {
                     #[cfg(feature = "cuda")]
                     {
                         info!("Using CUDA execution provider");
-                        let cuda_options = CUDAExecutionProviderOptions::default()
-                            .device_id(0)
-                            .gpu_mem_limit(SIZE_MAX as usize);
+                        let cuda_options = CUDAExecutionProviderOptions::default();
                         session_builder = session_builder.with_execution_providers([cuda_options.into()])?;
                     }
                     
@@ -163,9 +161,20 @@ impl OnnxSession {
                     let tensor_values = array.as_slice().unwrap_or(&[]).to_vec();
                     let tensor_shape = array.shape().iter().map(|&d| d as i64).collect::<Vec<i64>>();
                     
-                    let value = ort::Value::tensor_from_data(
-                        &tensor_shape,
-                        tensor_values,
+                    let array = ndarray::Array::from_shape_vec(
+                        ndarray::IxDyn(&tensor_shape),
+                        tensor_values
+                    ).map_err(|e| OnnxError::InferenceError(
+                        format!("Failed to create input array: {}", e)
+                    ))?;
+                    
+                    let cow_array = ndarray::CowArray::from(array);
+                    
+                    let allocator = session.allocator()?;
+                    
+                    let value = ort::Value::from_array(
+                        allocator,
+                        &cow_array
                     )?;
                     
                     input_values.push(value);
@@ -178,15 +187,25 @@ impl OnnxSession {
                 
                 for (i, name) in self.output_names.iter().enumerate() {
                     if i < outputs.len() {
-                        let tensor: OrtOwnedTensor<f32, _> = outputs[i].try_extract().map_err(|e| {
+                        let tensor_data = outputs[i].extract_tensor().map_err(|e| {
                             OnnxError::InferenceError(format!("Failed to extract tensor data for {}: {}", name, e))
                         })?;
                         
-                        let dims: Vec<usize> = tensor.shape().iter()
+                        let tensor_info = outputs[i].tensor_type_and_shape().map_err(|e| {
+                            OnnxError::InferenceError(format!("Failed to get tensor info for {}: {}", name, e))
+                        })?;
+                        
+                        let dims: Vec<usize> = tensor_info.shape
+                            .iter()
                             .map(|&d| d as usize)
                             .collect();
                         
-                        let data = tensor.view().as_slice().unwrap_or(&[]).to_vec();
+                        let data = match tensor_data {
+                            ort::tensor::TensorData::Float(data) => data.to_vec(),
+                            _ => return Err(OnnxError::InferenceError(
+                                format!("Unsupported tensor data type for {}", name)
+                            )),
+                        };
                         
                         let array = ArrayD::from_shape_vec(IxDyn(&dims), data)
                             .map_err(|e| OnnxError::InferenceError(
