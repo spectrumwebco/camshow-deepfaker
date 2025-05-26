@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use std::env;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecutionProvider {
+pub enum PlatformExecutionProvider {
     CPU,
     CUDA,
     CoreML,
@@ -103,13 +103,13 @@ pub fn detect_coreml() -> bool {
     false
 }
 
-pub fn get_optimal_provider() -> ExecutionProvider {
+pub fn get_optimal_provider() -> PlatformExecutionProvider {
     if detect_cuda() {
-        ExecutionProvider::CUDA
+        PlatformExecutionProvider::CUDA
     } else if detect_coreml() {
-        ExecutionProvider::CoreML
+        PlatformExecutionProvider::CoreML
     } else {
-        ExecutionProvider::CPU
+        PlatformExecutionProvider::CPU
     }
 }
 
@@ -143,8 +143,8 @@ fn py_detect_coreml() -> bool {
 #[pyfunction]
 fn py_get_optimal_provider() -> String {
     match get_optimal_provider() {
-        ExecutionProvider::CUDA => "CUDA".to_string(),
-        ExecutionProvider::CoreML => "CoreML".to_string(),
-        ExecutionProvider::CPU => "CPU".to_string(),
+        PlatformExecutionProvider::CUDA => "CUDA".to_string(),
+        PlatformExecutionProvider::CoreML => "CoreML".to_string(),
+        PlatformExecutionProvider::CPU => "CPU".to_string(),
     }
 }
