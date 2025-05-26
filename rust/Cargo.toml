@@ -40,7 +40,7 @@ tract-onnx = { version = "0.20.20", optional = true }
 default = ["onnxruntime"]
 onnxruntime = ["ort"]
 tract = ["tract-onnx"]
-cuda = ["opencv/cuda", "ort/cuda"]
+cuda = ["ort/cuda"]
 coreml = ["ort/coreml"]
 
 # UI dependencies
