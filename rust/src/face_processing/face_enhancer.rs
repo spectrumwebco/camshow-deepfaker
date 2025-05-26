@@ -64,15 +64,27 @@ impl FaceEnhancer {
         if let Some(session) = &self.session {
             info!("Using ONNX session with provider: {:?}", session.execution_provider());
             
-            let target_frame_array = self.numpy_to_ndarray(py, target_frame)?;
+            let target_frame_array = self.preprocess_frame(py, target_frame)?;
+            
+            let input_names = session.input_names();
+            if input_names.is_empty() {
+                warn!("Model doesn't have any inputs");
+                return Ok(target_frame.into_py(py));
+            }
             
             let mut inputs = HashMap::new();
-            inputs.insert("input".to_string(), target_frame_array);
+            inputs.insert(input_names[0].clone(), target_frame_array);
             
             match session.run(inputs) {
                 Ok(outputs) => {
-                    if let Some(output) = outputs.get("output") {
-                        return self.ndarray_to_numpy(py, output);
+                    let output_names = session.output_names();
+                    if output_names.is_empty() {
+                        warn!("Model doesn't have any outputs");
+                        return Ok(target_frame.into_py(py));
+                    }
+                    
+                    if let Some(output) = outputs.get(&output_names[0]) {
+                        return self.postprocess_output(py, output, target_frame);
                     } else {
                         warn!("No output found in inference result");
                     }
@@ -86,6 +98,86 @@ impl FaceEnhancer {
         }
         
         Ok(target_frame.into_py(py))
+    }
+    
+    fn preprocess_frame(&self, py: Python, frame: &PyAny) -> PyResult<ArrayD<f32>> {
+        let numpy = py.import("numpy")?;
+        let frame_array = if frame.is_instance(numpy.getattr("ndarray")?)? {
+            frame.to_object(py)
+        } else {
+            numpy.call_method1("array", (frame,))?.to_object(py)
+        };
+        
+        let frame_array = frame_array.as_ref(py);
+        
+        let frame_rgb = if frame_array.getattr("ndim")?.extract::<usize>()? == 3 {
+            let channels = frame_array.getattr("shape")?.extract::<Vec<usize>>()?[2];
+            if channels == 3 {
+                frame_array.to_object(py)
+            } else if channels == 4 {
+                frame_array.call_method("[:,:,:3]", (), None)?.to_object(py)
+            } else {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Unsupported number of channels: {}", channels)
+                ));
+            }
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Frame must be a 3D array (height, width, channels)"
+            ));
+        };
+        
+        let cv2 = py.import("cv2")?;
+        let frame_resized = cv2.call_method(
+            "resize", 
+            (frame_rgb.as_ref(py), (512, 512)), 
+            Some(PyDict::new(py).set_item("interpolation", cv2.getattr("INTER_AREA")?)?)
+        )?;
+        
+        let frame_normalized = frame_resized.call_method1("astype", (numpy.getattr("float32")?,))?
+            .call_method1("__truediv__", (255.0,))?;
+        
+        let frame_nchw = frame_normalized.call_method1(
+            "transpose", 
+            (PyTuple::new(py, &[2, 0, 1]),)
+        )?;
+        
+        let frame_batched = frame_nchw.call_method1(
+            "reshape", 
+            (PyTuple::new(py, &[1, 3, 512, 512]),)
+        )?;
+        
+        self.numpy_to_ndarray(py, frame_batched)
+    }
+    
+    fn postprocess_output(&self, py: Python, output: &ArrayD<f32>, original_frame: &PyAny) -> PyResult<PyObject> {
+        let numpy = py.import("numpy")?;
+        
+        let output_numpy = self.ndarray_to_numpy(py, output)?;
+        let output_array = output_numpy.as_ref(py);
+        
+        let original_shape = original_frame.getattr("shape")?.extract::<Vec<usize>>()?;
+        
+        let output_nhwc = output_array.call_method1(
+            "transpose", 
+            (PyTuple::new(py, &[0, 2, 3, 1]),)
+        )?;
+        
+        let cv2 = py.import("cv2")?;
+        let output_resized = cv2.call_method(
+            "resize", 
+            (output_nhwc, (original_shape[1], original_shape[0])), 
+            Some(PyDict::new(py).set_item("interpolation", cv2.getattr("INTER_LANCZOS4")?)?)
+        )?;
+        
+        let output_denormalized = output_resized.call_method1("__mul__", (255.0,))?;
+        
+        let output_uint8 = output_denormalized.call_method1(
+            "astype", 
+            (numpy.getattr("uint8")?,)
+        )?;
+        
+        Ok(output_uint8.into_py(py))
     }
     
     fn numpy_to_ndarray(&self, py: Python, array: &PyAny) -> PyResult<ArrayD<f32>> {
