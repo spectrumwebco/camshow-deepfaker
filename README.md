@@ -119,59 +119,77 @@ cd camshow-deepfaker
 
 Place these files in the "**models**" folder.
 
-**4. Install Dependencies**
+**4. Install Dependencies with UV**
 
-We highly recommend using a `venv` to avoid issues.
+We use UV for fast, reliable dependency management. UV is powered by Rust for superior performance.
 
-
-For Windows:
+**Installation Script (Recommended):**
 ```bash
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-```
-For Linux:
-```bash
-# Ensure you use the installed Python 3.10
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+chmod +x install.sh
+./install.sh
 ```
 
-**For macOS:**
+**Manual Installation:**
 
-Apple Silicon (M1/M2/M3) requires specific setup:
-
+For **Linux (Ubuntu 24.04 LTS)**:
 ```bash
-# Install Python 3.10 (specific version is important)
+# Install UV
+pip install uv
+
+# Install with CUDA support (if NVIDIA GPU detected)
+uv pip install -e ".[linux,dev]"
+
+# Or CPU-only version
+uv pip install -e ".[dev]"
+```
+
+For **macOS (Apple Silicon M1/M2/M3)**:
+```bash
+# Install Python 3.10 (required)
 brew install python@3.10
-
-# Install tkinter package (required for the GUI)
 brew install python-tk@3.10
 
-# Create and activate virtual environment with Python 3.10
-python3.10 -m venv venv
-source venv/bin/activate
+# Install UV
+pip install uv
+
+# Install with Apple Silicon optimizations
+uv pip install -e ".[macos-silicon,dev]"
+```
+
+For **macOS (Intel)**:
+```bash
+# Install UV
+pip install uv
 
 # Install dependencies
-pip install -r requirements.txt
+uv pip install -e ".[macos,dev]"
 ```
 
-** In case something goes wrong and you need to reinstall the virtual environment **
+**In case something goes wrong and you need to reinstall:**
 
 ```bash
-# Deactivate the virtual environment
-rm -rf venv
+# Install UV if not already installed
+pip install uv
 
-# Reinstall the virtual environment
-python -m venv venv
-source venv/bin/activate
-
-# install the dependencies again
-pip install -r requirements.txt
+# Reinstall dependencies
+uv pip sync
 ```
 
-**Run:** If you don't have a GPU, you can run Camshow Deepfaker using `python run.py`. Note that initial execution will download models (~300MB).
+**5. Run the Application**
+
+**GUI Mode (Traditional):**
+```bash
+python run.py
+```
+
+**API Mode (Headless/Production):**
+```bash
+python app.py
+# Or use the platform-optimized script
+./run_api.sh
+```
+
+The API will be available at `http://localhost:8000` with interactive documentation at `http://localhost:8000/docs`.
 
 ### GPU Acceleration
 
@@ -274,14 +292,14 @@ python run.py --execution-provider openvino
 
 ## Usage
 
-**1. Image/Video Mode**
+**1. Image/Video Mode (GUI)**
 
 -   Execute `python run.py`.
 -   Choose a source face image and a target image/video.
 -   Click "Start".
 -   The output will be saved in a directory named after the target video.
 
-**2. Webcam Mode**
+**2. Webcam Mode (GUI)**
 
 -   Execute `python run.py`.
 -   Select a source face image.
@@ -289,6 +307,50 @@ python run.py --execution-provider openvino
 -   Wait for the preview to appear (10-30 seconds).
 -   Use a screen capture tool like OBS to stream.
 -   To change the face, select a new source image.
+
+**3. API Mode (Headless)**
+
+-   Execute `python app.py` or `./run_api.sh`.
+-   The API server will start on port 8000.
+-   Access the API documentation at `http://localhost:8000/docs`.
+-   Use the API endpoints to upload files, process media, and download results.
+
+## API Documentation
+
+The Camshow Deepfaker API provides a headless interface for face swapping and deepfake functionality, ideal for server deployments and integration with other applications.
+
+### Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | API information |
+| `/upload` | POST | Upload source or target files |
+| `/process` | POST | Process media with face swap |
+| `/download/{filename}` | GET | Download processed files |
+| `/status` | GET | Get system status |
+
+### Example Usage
+
+**Upload a file:**
+```bash
+curl -X POST -F "file=@/path/to/source.jpg" http://localhost:8000/upload
+```
+
+**Process media:**
+```bash
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"source_path": "uploads/source.jpg", "target_path": "uploads/target.mp4"}' \
+  http://localhost:8000/process
+```
+
+**Download processed file:**
+```bash
+curl -X GET http://localhost:8000/download/target.mp4 -o processed_video.mp4
+```
+
+### Integration with PyO3 Rust Modules
+
+The API is designed to work seamlessly with future PyO3 Rust modules. As performance-critical components are migrated to Rust, they will be integrated with the FastAPI backend without changing the API interface.
 
 ## Tips and Tricks
 
