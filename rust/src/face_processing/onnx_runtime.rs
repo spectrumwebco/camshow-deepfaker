@@ -17,7 +17,7 @@ use ort::{
     tensor::ndarray_tensor::NdArrayTensor
 };
 
-use crate::platform::{ExecutionProvider as PlatformExecutionProvider, get_optimal_provider};
+use crate::platform::{PlatformExecutionProvider, get_optimal_provider};
 
 #[derive(Debug, Error)]
 pub enum OnnxError {
