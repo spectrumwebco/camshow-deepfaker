@@ -12,7 +12,7 @@ use face_analyser::FaceAnalyser;
 use onnx_runtime::{PyOnnxSession, PyModelManager};
 
 #[pymodule]
-pub fn face_processing_module(py: Python, m: &PyModule) -> PyResult<()> {
+pub fn face_processing_module(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<FaceSwapper>()?;
     m.add_class::<FaceEnhancer>()?;
     m.add_class::<FaceAnalyser>()?;
@@ -30,9 +30,9 @@ pub fn face_processing_module(py: Python, m: &PyModule) -> PyResult<()> {
 #[pyfunction]
 fn swap_face(
     py: Python,
-    source_image: &PyAny,
+    _source_image: &PyAny,
     target_image: &PyAny,
-    model_path: Option<String>,
+    _model_path: Option<String>,
 ) -> PyResult<PyObject> {
     Ok(target_image.into_py(py))
 }
@@ -41,7 +41,7 @@ fn swap_face(
 fn enhance_face(
     py: Python,
     image: &PyAny,
-    model_path: Option<String>,
+    _model_path: Option<String>,
 ) -> PyResult<PyObject> {
     Ok(image.into_py(py))
 }
@@ -49,9 +49,10 @@ fn enhance_face(
 #[pyfunction]
 fn detect_faces(
     py: Python,
-    image: &PyAny,
+    _image: &PyAny,
 ) -> PyResult<PyObject> {
-    Ok(vec![].into_py(py))
+    let empty_list = pyo3::types::PyList::empty(py);
+    Ok(empty_list.into_py(py))
 }
 
 #[pyfunction]
@@ -60,38 +61,48 @@ fn download_models(
     models: Option<Vec<String>>,
 ) -> PyResult<Vec<String>> {
     let model_dir = model_dir.unwrap_or_else(|| "models".to_string());
-    let model_manager = PyModelManager::new(Some(model_dir))?;
+    let model_manager = onnx_runtime::ModelManager::new(model_dir);
     
-    if models.is_some() {
-        let models = models.unwrap();
+    if let Some(models) = models {
         let mut downloaded = Vec::new();
         
         for model in models {
-            if !model_manager.model_exists(&model) {
+            if model_manager.model_exists(&model) {
+                println!("Model already exists: {}", model);
+                let path = model_manager.model_dir.join(&model).to_string_lossy().to_string();
+                downloaded.push(path);
+            } else {
                 match model_manager.get_model_path(&model) {
                     Ok(path) => {
                         println!("Downloaded model: {}", model);
-                        downloaded.push(path);
+                        downloaded.push(path.to_string_lossy().to_string());
                     },
                     Err(e) => println!("Failed to download model {}: {}", model, e),
                 }
-            } else {
-                println!("Model already exists: {}", model);
-                downloaded.push(model_manager.model_dir.clone() + "/" + &model);
             }
         }
         
         Ok(downloaded)
     } else {
-        match model_manager.download_all_models() {
-            Ok(paths) => {
-                println!("Downloaded all required models");
-                Ok(paths)
-            },
-            Err(e) => {
-                println!("Failed to download all models: {}", e);
-                Err(e)
+        // Download all required models
+        let required_models = vec![
+            "inswapper_128.onnx",
+            "buffalo_l.onnx",
+            "gfpgan_1.4.onnx",
+        ];
+        
+        let mut downloaded = Vec::new();
+        
+        for model_name in required_models {
+            match model_manager.get_model_path(model_name) {
+                Ok(path) => {
+                    println!("Downloaded model: {}", model_name);
+                    downloaded.push(path.to_string_lossy().to_string());
+                },
+                Err(e) => println!("Failed to download model {}: {}", model_name, e),
             }
         }
+        
+        Ok(downloaded)
     }
 }

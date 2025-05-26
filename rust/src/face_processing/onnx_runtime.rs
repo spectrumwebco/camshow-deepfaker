@@ -66,14 +66,14 @@ impl OnnxSession {
         
         #[cfg(feature = "onnxruntime")]
         let (session, input_names, output_names) = {
-            let environment = Environment::builder()
+            let environment = Arc::new(Environment::builder()
                 .with_name("camshow_deepfaker")
                 .with_log_level(LoggingLevel::Warning)
-                .build()?;
+                .build()?);
             
             let mut session_builder = SessionBuilder::new(&environment)?
                 .with_optimization_level(GraphOptimizationLevel::Level3)?
-                .with_intra_op_num_threads(num_cpus::get())?;
+                .with_intra_threads(num_cpus::get())?;
             
             match execution_provider {
                 ExecutionProvider::CUDA => {
@@ -146,7 +146,10 @@ impl OnnxSession {
                         return Err(OnnxError::InvalidInput(format!("Unknown input name: {}", name)));
                     }
                     
-                    let value = Value::from_array(array.clone())?;
+                    let dims = array.shape().to_vec();
+                    let flat_data = array.as_slice().unwrap_or(&[]).to_vec();
+                    
+                    let value = Value::from_data_slice(&flat_data, &dims)?;
                     input_values.push(value);
                 }
                 
@@ -157,7 +160,11 @@ impl OnnxSession {
                 for (i, name) in self.output_names.iter().enumerate() {
                     if i < outputs.len() {
                         let output = outputs[i].try_extract::<f32>()?;
-                        result.insert(name.clone(), output);
+                        let shape = output.shape().to_vec();
+                        let data = output.as_slice().unwrap_or(&[]).to_vec();
+                        let array = ArrayD::from_shape_vec(IxDyn(&shape), data)
+                            .map_err(|e| OnnxError::InferenceError(format!("Failed to convert output: {}", e)))?;
+                        result.insert(name.clone(), array);
                     }
                 }
                 
