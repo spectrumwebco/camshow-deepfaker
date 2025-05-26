@@ -64,22 +64,27 @@ impl FaceAnalyser {
         if let Some(session) = &self.session {
             info!("Using ONNX session with provider: {:?}", session.execution_provider());
             
-            let frame_array = self.numpy_to_ndarray(py, frame)?;
+            let frame_array = self.preprocess_frame(py, frame)?;
+            
+            let input_names = session.input_names();
+            if input_names.is_empty() {
+                warn!("Model doesn't have any inputs");
+                return Ok(PyList::empty(py).into_py(py));
+            }
             
             let mut inputs = HashMap::new();
-            inputs.insert("input".to_string(), frame_array);
+            inputs.insert(input_names[0].clone(), frame_array);
             
             match session.run(inputs) {
                 Ok(outputs) => {
-                    if let Some(output) = outputs.get("output") {
-                        let faces = PyList::empty(py);
-                        
-                        let face_dict = PyDict::new(py);
-                        face_dict.set_item("confidence", 0.99)?;
-                        face_dict.set_item("bbox", PyTuple::new(py, &[0, 0, 100, 100]))?;
-                        faces.append(face_dict)?;
-                        
-                        return Ok(faces.into_py(py));
+                    let output_names = session.output_names();
+                    if output_names.is_empty() {
+                        warn!("Model doesn't have any outputs");
+                        return Ok(PyList::empty(py).into_py(py));
+                    }
+                    
+                    if let Some(output) = outputs.get(&output_names[0]) {
+                        return self.process_detection_output(py, output, frame);
                     } else {
                         warn!("No output found in inference result");
                     }
@@ -93,6 +98,140 @@ impl FaceAnalyser {
         }
         
         Ok(PyList::empty(py).into_py(py))
+    }
+    
+    fn preprocess_frame(&self, py: Python, frame: &PyAny) -> PyResult<ArrayD<f32>> {
+        let numpy = py.import("numpy")?;
+        let frame_array = if frame.is_instance(numpy.getattr("ndarray")?)? {
+            frame.to_object(py)
+        } else {
+            numpy.call_method1("array", (frame,))?.to_object(py)
+        };
+        
+        let frame_array = frame_array.as_ref(py);
+        
+        let frame_rgb = if frame_array.getattr("ndim")?.extract::<usize>()? == 3 {
+            let channels = frame_array.getattr("shape")?.extract::<Vec<usize>>()?[2];
+            if channels == 3 {
+                frame_array.to_object(py)
+            } else if channels == 4 {
+                frame_array.call_method("[:,:,:3]", (), None)?.to_object(py)
+            } else {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    format!("Unsupported number of channels: {}", channels)
+                ));
+            }
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Frame must be a 3D array (height, width, channels)"
+            ));
+        };
+        
+        let cv2 = py.import("cv2")?;
+        let frame_resized = cv2.call_method(
+            "resize", 
+            (frame_rgb.as_ref(py), (640, 640)), 
+            Some(PyDict::new(py).set_item("interpolation", cv2.getattr("INTER_AREA")?)?)
+        )?;
+        
+        let frame_normalized = frame_resized.call_method1("astype", (numpy.getattr("float32")?,))?
+            .call_method1("__truediv__", (255.0,))?;
+        
+        let frame_nchw = frame_normalized.call_method1(
+            "transpose", 
+            (PyTuple::new(py, &[2, 0, 1]),)
+        )?;
+        
+        let frame_batched = frame_nchw.call_method1(
+            "reshape", 
+            (PyTuple::new(py, &[1, 3, 640, 640]),)
+        )?;
+        
+        self.numpy_to_ndarray(py, frame_batched)
+    }
+    
+    fn process_detection_output(&self, py: Python, output: &ArrayD<f32>, original_frame: &PyAny) -> PyResult<PyObject> {
+        let numpy = py.import("numpy")?;
+        
+        let output_numpy = self.ndarray_to_numpy(py, output)?;
+        let output_array = output_numpy.as_ref(py);
+        
+        let original_shape = original_frame.getattr("shape")?.extract::<Vec<usize>>()?;
+        let orig_height = original_shape[0] as f32;
+        let orig_width = original_shape[1] as f32;
+        
+        let scale_x = orig_width / 640.0;
+        let scale_y = orig_height / 640.0;
+        
+        let faces = PyList::empty(py);
+        
+        let output_shape = output_array.getattr("shape")?.extract::<Vec<usize>>()?;
+        if output_shape.len() < 3 {
+            warn!("Unexpected output shape: {:?}", output_shape);
+            return Ok(faces.into_py(py));
+        }
+        
+        let num_detections = output_shape[1];
+        let detection_size = output_shape[2];
+        
+        let confidence_threshold = 0.5;
+        
+        for i in 0..num_detections {
+            let detection = output_array.call_method1("__getitem__", (PyTuple::new(py, &[0, i]),))?;
+            
+            let confidence = detection.call_method1("__getitem__", (4,))?.extract::<f32>()?;
+            
+            if confidence < confidence_threshold {
+                continue;
+            }
+            
+            let x1 = detection.call_method1("__getitem__", (0,))?.extract::<f32>()? * scale_x;
+            let y1 = detection.call_method1("__getitem__", (1,))?.extract::<f32>()? * scale_y;
+            let x2 = detection.call_method1("__getitem__", (2,))?.extract::<f32>()? * scale_x;
+            let y2 = detection.call_method1("__getitem__", (3,))?.extract::<f32>()? * scale_y;
+            
+            let face_dict = PyDict::new(py);
+            face_dict.set_item("confidence", confidence)?;
+            face_dict.set_item("bbox", PyTuple::new(py, &[
+                (x1 as i32).max(0),
+                (y1 as i32).max(0),
+                (x2 as i32).min(orig_width as i32),
+                (y2 as i32).min(orig_height as i32)
+            ]))?;
+            
+            if detection_size >= 15 {
+                let landmarks = PyList::empty(py);
+                
+                for j in 0..5 {
+                    let landmark_x = detection.call_method1("__getitem__", (5 + j * 2,))?.extract::<f32>()? * scale_x;
+                    let landmark_y = detection.call_method1("__getitem__", (6 + j * 2,))?.extract::<f32>()? * scale_y;
+                    
+                    landmarks.append(PyTuple::new(py, &[landmark_x as i32, landmark_y as i32]))?;
+                }
+                
+                face_dict.set_item("landmarks", landmarks)?;
+            }
+            
+            let x1_int = (x1 as i32).max(0);
+            let y1_int = (y1 as i32).max(0);
+            let x2_int = (x2 as i32).min(orig_width as i32);
+            let y2_int = (y2 as i32).min(orig_height as i32);
+            
+            let face_img = original_frame.call_method(
+                "__getitem__", 
+                (PyTuple::new(py, &[
+                    format!("{}:{}", y1_int, y2_int),
+                    format!("{}:{}", x1_int, x2_int)
+                ]),), 
+                None
+            )?;
+            
+            face_dict.set_item("image", face_img)?;
+            
+            faces.append(face_dict)?;
+        }
+        
+        Ok(faces.into_py(py))
     }
 
     fn get_landmarks(&self, py: Python, face: &PyAny) -> PyResult<PyObject> {
